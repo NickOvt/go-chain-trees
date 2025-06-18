@@ -61,7 +61,7 @@ func getMinNode(node *Node) *Node {
 // Node data as raw bytes
 //
 // Optional error
-func (t *AVLHashTree) Search(key []byte) (any, error) {
+func (t *AVLHashTree) Search(key utils.CBORData) (any, error) {
 	node := t.search(t.Root, key)
 	if node == nil {
 		return nil, errors.New("Node with given hashkey not found")
@@ -129,6 +129,7 @@ func (t *AVLHashTree) InsertCBOR(keyCBOR utils.CBORData, dataCBOR utils.CBORData
 }
 
 // Insert arbitrary hash as key, and data
+//
 // Hash and Data are converted to CBOR before inserting
 func (t *AVLHashTree) Insert(key utils.Hash, data any) error {
 	// Encode the hash bytes to CBOR
