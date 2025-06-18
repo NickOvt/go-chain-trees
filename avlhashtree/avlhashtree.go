@@ -2,29 +2,27 @@ package avlhashtree
 
 import (
 	"bytes"
-	"crypto/sha3"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/NickOvt/go-chain-trees/utils"
 )
 
 // Node represents a node in the AVL tree
 type Node struct {
-	Key        []byte // Hash value used as key
-	Data       []byte // Original data or reference
-	Height     int    // Height used for balancing
-	LeftChild  *Node
-	RightChild *Node
+	Key         utils.CBORData // Hash value used as key = ID, CBOR
+	Data        utils.CBORData // Original data, CBOR
+	Height      int            // Height used for balancing
+	LeftChild   *Node
+	RightChild  *Node
+	NodeHash    []byte // Hash of Key + Data (Current node's hash)
+	SubtreeHash []byte // NodeHash + NodeHash of Left Child + NodeHash of Right Child
 }
 
 // Main AVL Tree struct
 type AVLHashTree struct {
 	Root *Node
-}
-
-func GenerateHash(data []byte) []byte {
-	hash := sha3.Sum384(data)
-	return hash[:]
 }
 
 // NewAVLHashTree creates a new, empty AVL hash tree
@@ -53,15 +51,32 @@ func getMinNode(node *Node) *Node {
 	return getMinNode(node.LeftChild)
 }
 
-func (t *AVLHashTree) Search(key []byte) ([]byte, error) {
+// Search for node in AVL Hash Tree
+//
+// Params:
+//
+// Key: CBOR bytes array
+//
+// Returns:
+// Node data as raw bytes
+//
+// Optional error
+func (t *AVLHashTree) Search(key []byte) (any, error) {
 	node := t.search(t.Root, key)
 	if node == nil {
 		return nil, errors.New("Node with given hashkey not found")
 	}
-	return node.Data, nil
+
+	dataDecoded, err := utils.DecodeCBOR[int](node.Data)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return dataDecoded, nil
 }
 
-func (t *AVLHashTree) search(node *Node, key []byte) *Node {
+func (t *AVLHashTree) search(node *Node, key utils.CBORData) *Node {
 	for node != nil {
 		cmp := bytes.Compare(key, node.Key)
 
@@ -106,31 +121,57 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 	return A
 }
 
-func (t *AVLHashTree) Insert(key []byte) error {
-	t.Root = t.insert(t.Root, key)
+// Expect CBOR data directly
+func (t *AVLHashTree) InsertCBOR(keyCBOR utils.CBORData, dataCBOR utils.CBORData) error {
+	// Encode the hash bytes to CBOR
+	t.Root = t.insert(t.Root, keyCBOR, dataCBOR)
 	return nil
 }
 
-func (t *AVLHashTree) insert(root *Node, key []byte) *Node {
+// Insert arbitrary hash as key, and data
+// Hash and Data are converted to CBOR before inserting
+func (t *AVLHashTree) Insert(key utils.Hash, data any) error {
+	// Encode the hash bytes to CBOR
+	encodedKey, err := utils.EncodeCBOR(key)
+	if err != nil {
+		return err
+	}
+
+	// Encode data to CBOR only if it's not nil
+	var dataCBOR []byte
+	if data != nil {
+		var err error
+		dataCBOR, err = utils.EncodeCBOR(data)
+		if err != nil {
+			return err
+		}
+	}
+
+	t.Root = t.insert(t.Root, encodedKey, dataCBOR)
+	return nil
+}
+
+func (t *AVLHashTree) insert(root *Node, key utils.CBORData, data utils.CBORData) *Node {
 	if root == nil {
 		return &Node{
 			Key:        key,
-			Data:       nil,
+			Data:       data,
 			Height:     1,
 			LeftChild:  nil,
 			RightChild: nil,
+			NodeHash:   utils.ConcatDataAndGenerateHash(key, data),
 		}
 	}
 
 	cmp := bytes.Compare(key, root.Key)
 
 	if cmp < 0 {
-		root.LeftChild = t.insert(root.LeftChild, key)
+		root.LeftChild = t.insert(root.LeftChild, key, data)
 	} else if cmp > 0 {
-		root.RightChild = t.insert(root.RightChild, key)
+		root.RightChild = t.insert(root.RightChild, key, data)
 	} else {
 		// duplicate
-		root.RightChild = t.insert(root.RightChild, key)
+		root.RightChild = t.insert(root.RightChild, key, data)
 	}
 
 	root.Height = 1 + max(height(root.LeftChild), height(root.RightChild))
@@ -158,12 +199,24 @@ func (t *AVLHashTree) insert(root *Node, key []byte) *Node {
 	return root
 }
 
-func (t *AVLHashTree) Delete(key []byte) error {
+// Expect CBOR key
+func (t *AVLHashTree) DeleteCBOR(key utils.CBORData) error {
 	t.Root = t.delete(t.Root, key)
 	return nil
 }
 
-func (t *AVLHashTree) delete(root *Node, key []byte) *Node {
+// Expect raw key hash - Encode it to CBOR
+func (t *AVLHashTree) Delete(key utils.Hash) error {
+	encodedKey, err := utils.EncodeCBOR(key)
+	if err != nil {
+		return err
+	}
+
+	t.Root = t.delete(t.Root, encodedKey)
+	return nil
+}
+
+func (t *AVLHashTree) delete(root *Node, key utils.CBORData) *Node {
 	if root == nil {
 		return nil
 	}
