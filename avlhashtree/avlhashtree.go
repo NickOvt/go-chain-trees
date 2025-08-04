@@ -269,31 +269,41 @@ func (t *AVLHashTree) Delete(key utils.Hash) error {
 }
 
 func (t *AVLHashTree) delete(root *Node, key utils.CBORData) *Node {
+	newRoot, _ := t.deleteRecursive(root, key)
+	return newRoot
+}
+
+func (t *AVLHashTree) deleteRecursive(root *Node, key utils.CBORData) (*Node, bool) {
 	if root == nil {
-		return nil
+		return nil, false
 	}
 
+	var changed bool
 	cmp := bytes.Compare(key, root.Key)
 
 	if cmp < 0 {
-		root.LeftChild = t.delete(root.LeftChild, key)
+		root.LeftChild, changed = t.deleteRecursive(root.LeftChild, key)
 	} else if cmp > 0 {
-		root.RightChild = t.delete(root.RightChild, key)
+		root.RightChild, changed = t.deleteRecursive(root.RightChild, key)
 	} else {
 		if root.LeftChild == nil {
 			temp := root.RightChild
 			root = nil
-			return temp
+			return temp, true
 		} else if root.RightChild == nil {
 			temp := root.LeftChild
 			root = nil
-			return temp
+			return temp, true
 		}
 
 		// Find inorder successor
 		temp := getMinNode(root.RightChild)
 		root.Key = temp.Key
-		root.RightChild = t.delete(root.RightChild, temp.Key)
+		root.RightChild, changed = t.deleteRecursive(root.RightChild, temp.Key)
+	}
+
+	if !changed {
+		return root, false
 	}
 
 	root.Height = 1 + max(height(root.LeftChild), height(root.RightChild))
@@ -301,24 +311,30 @@ func (t *AVLHashTree) delete(root *Node, key utils.CBORData) *Node {
 	balanceFactor := getBalanceFactor(root)
 
 	if balanceFactor > 1 && getBalanceFactor(root.LeftChild) >= 0 {
-		return t.rotateRight(root)
+		root = t.rotateRight(root)
 	}
 
 	if balanceFactor < -1 && getBalanceFactor(root.RightChild) <= 0 {
-		return t.rotateLeft(root)
+		root = t.rotateLeft(root)
 	}
 
 	if balanceFactor > 1 && getBalanceFactor(root.LeftChild) < 0 {
 		root.LeftChild = t.rotateLeft(root.LeftChild)
-		return t.rotateRight(root)
+		root = t.rotateRight(root)
 	}
 
 	if balanceFactor < -1 && getBalanceFactor(root.RightChild) > 0 {
 		root.RightChild = t.rotateRight(root.RightChild)
-		return t.rotateLeft(root)
+		root = t.rotateLeft(root)
 	}
 
-	return root
+	_, err := root.calculateSubtreeHash()
+	if err != nil {
+		// handle error
+		fmt.Println("Calculate Subtree Hash Failed")
+	}
+
+	return root, true
 }
 
 func (t *AVLHashTree) PrintTree() {
