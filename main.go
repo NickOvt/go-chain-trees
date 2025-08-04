@@ -19,7 +19,10 @@ func main() {
 	keys := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 	for _, key := range keys {
-		avl.Insert(utils.GenerateHash([]byte(strconv.Itoa(key))), key)
+		err := avl.Insert(utils.GenerateHash([]byte(strconv.Itoa(key))), key)
+		if err != nil {
+			return
+		}
 		// avl.PrintTree()
 	}
 
@@ -35,4 +38,8 @@ func main() {
 	fmt.Println(fmt.Sprintf("%x", aaa))
 
 	fmt.Println(avl.Search(search))
+
+	if err := avl.ValidateTree(); err != nil {
+		fmt.Printf("Tree validation failed: %v\n", err)
+	}
 }

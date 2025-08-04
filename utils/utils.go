@@ -9,7 +9,7 @@ import (
 type CBORData []byte
 type Hash []byte
 
-// Encode any given value to CBOR
+// EncodeCBOR Encode any given value to CBOR
 func EncodeCBOR(v any) (CBORData, error) {
 	b, err := cbor.Marshal(v)
 
@@ -20,7 +20,7 @@ func EncodeCBOR(v any) (CBORData, error) {
 	return b, nil
 }
 
-// Decode CBOR value to data
+// DecodeCBOR Decode CBOR value to data
 func DecodeCBOR[T any](cborData CBORData) (T, error) {
 	var output T
 	err := cbor.Unmarshal(cborData, &output)
@@ -32,13 +32,14 @@ func DecodeCBOR[T any](cborData CBORData) (T, error) {
 	return output, nil
 }
 
-// Generate hash of given bytes
+// GenerateHash Generate hash of given bytes
 func GenerateHash(data []byte) Hash {
 	hash := sha3.Sum384(data)
 	return hash[:]
 }
 
-func ConcatDataAndGenerateHash(data ...[]byte) Hash {
+// ConcatDataAndGenerateHash Given n CBOR byte arrays concat them and calculate hash
+func ConcatDataAndGenerateHash(data ...CBORData) Hash {
 	// Calculate total length needed to preallocate memory
 	totalLen := 0
 	for _, slice := range data {
@@ -51,6 +52,24 @@ func ConcatDataAndGenerateHash(data ...[]byte) Hash {
 		combined = append(combined, slice...)
 	}
 
-	// Use your existing generateHash function
 	return GenerateHash(combined)
+}
+
+// EncodeCBORList Encode any given value to CBOR. Accepts multiple values
+// If there is an error with any of the values then whole function
+// returns an error
+func EncodeCBORList(v ...any) ([]CBORData, error) {
+	cborDataList := make([]CBORData, len(v))
+
+	for index, value := range v {
+		b, err := cbor.Marshal(value)
+
+		if err != nil {
+			return nil, err
+		}
+
+		cborDataList[index] = b
+	}
+
+	return cborDataList, nil
 }

@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AVL Tree Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0a0a0a;
+            min-height: 100vh;
+            color: #ffffff;
+            overflow-x: auto;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            color: #888888;
+            font-weight: 400;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .custom-input {
+            background: #1a1a1a;
+            border: 2px solid #333333;
+            color: #ffffff;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 1rem;
+            width: 100px;
+            text-align: center;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .custom-input:focus {
+            outline: none;
+            background: #222222;
+            border-color: #555555;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+        }
+
+        .custom-input::placeholder {
+            color: #666666;
+        }
+
+        .custom-input::-webkit-outer-spin-button,
+        .custom-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .custom-input[type=number] {
+            -moz-appearance: textfield;
+        }
+
+        .btn {
+            background: #1a1a1a;
+            border: 2px solid #333333;
+            color: #ffffff;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background: #2a2a2a;
+            border-color: #555555;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+            background: #333333;
+        }
+
+        .tree-container {
+            position: relative;
+            min-height: 600px;
+            background: #111111;
+            border-radius: 12px;
+            border: 1px solid #333333;
+            overflow: visible;
+            padding: 40px;
+        }
+
+        .tree-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .tree-line {
+            stroke: #666666;
+            stroke-width: 2;
+            fill: none;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            stroke-linecap: round;
+        }
+
+        .tree-line.new-connection {
+            animation: lineGrow 0.6s ease-out;
+        }
+
+        @keyframes lineGrow {
+            0% {
+                stroke-dasharray: 200;
+                stroke-dashoffset: 200;
+                opacity: 0;
+            }
+
+            100% {
+                stroke-dasharray: 200;
+                stroke-dashoffset: 0;
+                opacity: 1;
+            }
+        }
+
+        .tree-node {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+            border: 2px solid #444444;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 18px;
+            color: #ffffff;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transform-origin: center;
+        }
+
+        .tree-node:hover {
+            transform: scale(1.05);
+            border-color: #666666;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .tree-node.inserting {
+            animation: nodeInsert 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+
+        .tree-node.rotating {
+            animation: nodeRotate 0.6s ease-in-out;
+        }
+
+        @keyframes nodeInsert {
+            0% {
+                transform: scale(0) rotate(180deg);
+                opacity: 0;
+            }
+
+            50% {
+                transform: scale(1.2) rotate(90deg);
+                opacity: 0.8;
+            }
+
+            100% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+        }
+
+        @keyframes nodeRotate {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.15) rotate(5deg);
+            }
+        }
+
+        .height-indicator {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 18px;
+            height: 18px;
+            background: #ffffff;
+            color: #000000;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: 1px solid #333333;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: #1a1a1a;
+            padding: 20px 30px;
+            border-radius: 12px;
+            border: 1px solid #333333;
+        }
+
+        .stat-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #ffffff;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #888888;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 100px 20px;
+            color: #666666;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            color: #888888;
+            font-weight: 600;
+        }
+
+        .empty-state p {
+            font-size: 1.1rem;
+            color: #666666;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .controls {
+                gap: 10px;
+            }
+
+            .btn {
+                padding: 10px 20px;
+                font-size: 0.9rem;
+            }
+
+            .tree-node {
+                width: 50px;
+                height: 50px;
+                font-size: 16px;
+            }
+
+            .stats {
+                gap: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AVL Tree Visualizer</h1>
+            <p>A self-balancing binary search tree with smooth animations</p>
+        </div>
+
+        <div class="controls">
+            <div class="input-group">
+                <input type="number" class="custom-input" id="customValue" placeholder="Value" min="1" max="999">
+                <button class="btn" onclick="addCustomNode()">Add Custom Node</button>
+            </div>
+            <button class="btn" onclick="addRandomNode()">Add Random Node</button>
+            <button class="btn" onclick="addFiveNodes()">Add 5 Random Nodes</button>
+            <button class="btn" onclick="clearTree()">Clear Tree</button>
+        </div>
+
+        <div class="tree-container" id="treeContainer">
+            <svg class="tree-svg" id="treeSvg"></svg>
+            <div class="empty-state" id="emptyState">
+                <h3>Tree is Empty</h3>
+                <p>Click "Add Random Node" to start building your AVL tree</p>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="nodeCount">0</div>
+                <div class="stat-label">Nodes</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="treeHeight">0</div>
+                <div class="stat-label">Height</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="rotationCount">0</div>
+                <div class="stat-label">Rotations</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class AVLNode {
+            constructor(value) {
+                this.value = value;
+                this.left = null;
+                this.right = null;
+                this.height = 1;
+                this.element = null;
+                this.x = 0;
+                this.y = 0;
+            }
+        }
+
+        class AVLTree {
+            constructor() {
+                this.root = null;
+                this.rotationCount = 0;
+                this.nodeElements = new Map();
+                this.connections = new Set(); // Track existing connections
+                this.lineElements = new Map(); // Track line elements
+            }
+
+            getHeight(node) {
+                return node ? node.height : 0;
+            }
+
+            getBalance(node) {
+                return node ? this.getHeight(node.left) - this.getHeight(node.right) : 0;
+            }
+
+            updateHeight(node) {
+                if (node) {
+                    node.height = Math.max(this.getHeight(node.left), this.getHeight(node.right)) + 1;
+                }
+            }
+
+            rotateRight(y, animate = true) {
+                if (animate) this.rotationCount++;
+                const x = y.left;
+                const T2 = x.right;
+
+                x.right = y;
+                y.left = T2;
+
+                this.updateHeight(y);
+                this.updateHeight(x);
+
+                if (animate) {
+                    this.animateRotation([x, y]);
+                }
+
+                return x;
+            }
+
+            rotateLeft(x, animate = true) {
+                if (animate) this.rotationCount++;
+                const y = x.right;
+                const T2 = y.left;
+
+                y.left = x;
+                x.right = T2;
+
+                this.updateHeight(x);
+                this.updateHeight(y);
+
+                if (animate) {
+                    this.animateRotation([x, y]);
+                }
+
+                return y;
+            }
+
+            insert(node, value, animate = true) {
+                if (!node) {
+                    const newNode = new AVLNode(value);
+                    if (animate) {
+                        this.createNodeElement(newNode);
+                    }
+                    return newNode;
+                }
+
+                if (value < node.value) {
+                    node.left = this.insert(node.left, value, animate);
+                } else if (value > node.value) {
+                    node.right = this.insert(node.right, value, animate);
+                } else {
+                    return node; // Duplicate values not allowed
+                }
+
+                this.updateHeight(node);
+
+                const balance = this.getBalance(node);
+
+                // Left Left Case
+                if (balance > 1 && value < node.left.value) {
+                    return this.rotateRight(node, animate);
+                }
+
+                // Right Right Case
+                if (balance < -1 && value > node.right.value) {
+                    return this.rotateLeft(node, animate);
+                }
+
+                // Left Right Case
+                if (balance > 1 && value > node.left.value) {
+                    node.left = this.rotateLeft(node.left, animate);
+                    return this.rotateRight(node, false); // Don't double count
+                }
+
+                // Right Left Case
+                if (balance < -1 && value < node.right.value) {
+                    node.right = this.rotateRight(node.right, animate);
+                    return this.rotateLeft(node, false); // Don't double count
+                }
+
+                return node;
+            }
+
+            createNodeElement(node) {
+                const nodeEl = document.createElement('div');
+                nodeEl.className = 'tree-node';
+                nodeEl.textContent = node.value;
+
+                const heightIndicator = document.createElement('div');
+                heightIndicator.className = 'height-indicator';
+                heightIndicator.textContent = node.height;
+                nodeEl.appendChild(heightIndicator);
+
+                node.element = nodeEl;
+                this.nodeElements.set(node.value, nodeEl);
+                document.getElementById('treeContainer').appendChild(nodeEl);
+
+                // Start insertion animation immediately
+                nodeEl.classList.add('inserting');
+                setTimeout(() => {
+                    nodeEl.classList.remove('inserting');
+                }, 800);
+            }
+
+            animateRotation(nodes) {
+                nodes.forEach(node => {
+                    if (node.element) {
+                        node.element.classList.add('rotating');
+                        setTimeout(() => {
+                            node.element.classList.remove('rotating');
+                        }, 600);
+                    }
+                    // Handle window resize
+                    window.addEventListener('resize', () => {
+                        setTimeout(() => {
+                            avlTree.updateVisualization();
+                        }, 100);
+                    });
+                })
+            }
+
+            calculatePositions(node, x, y, spacing) {
+                if (!node) return;
+
+                node.x = x;
+                node.y = y;
+
+                if (node.left) {
+                    this.calculatePositions(node.left, x - spacing, y + 100, spacing * 0.7);
+                }
+                if (node.right) {
+                    this.calculatePositions(node.right, x + spacing, y + 100, spacing * 0.7);
+                }
+            }
+
+            updateVisualization() {
+                if (!this.root) {
+                    document.getElementById('emptyState').style.display = 'block';
+                    return;
+                }
+
+                document.getElementById('emptyState').style.display = 'none';
+
+                const container = document.getElementById('treeContainer');
+                const containerRect = container.getBoundingClientRect();
+                const centerX = containerRect.width / 2;
+
+                this.calculatePositions(this.root, centerX, 80, 150);
+                this.updateNodePositions(this.root);
+                this.updateConnectionsSmooth();
+                this.updateStats();
+            }
+
+            updateNodePositions(node) {
+                if (!node || !node.element) return;
+
+                node.element.style.left = (node.x - 30) + 'px';
+                node.element.style.top = node.y + 'px';
+
+                const heightIndicator = node.element.querySelector('.height-indicator');
+                if (heightIndicator) {
+                    heightIndicator.textContent = node.height;
+                }
+
+                if (node.left) this.updateNodePositions(node.left);
+                if (node.right) this.updateNodePositions(node.right);
+            }
+
+            updateConnectionsSmooth() {
+                const currentConnections = new Set();
+                this.collectConnections(this.root, currentConnections);
+
+                // Remove connections that no longer exist
+                for (const connection of this.connections) {
+                    if (!currentConnections.has(connection)) {
+                        this.removeConnection(connection);
+                    }
+                }
+
+                // Add new connections
+                for (const connection of currentConnections) {
+                    if (!this.connections.has(connection)) {
+                        this.addConnection(connection, true); // animate new connections
+                    } else {
+                        // Update existing connection positions
+                        this.updateConnectionPosition(connection);
+                    }
+                }
+
+                this.connections = currentConnections;
+            }
+
+            collectConnections(node, connections) {
+                if (!node) return;
+
+                if (node.left) {
+                    const connectionKey = `${node.value}-${node.left.value}`;
+                    connections.add(connectionKey);
+                    this.collectConnections(node.left, connections);
+                }
+
+                if (node.right) {
+                    const connectionKey = `${node.value}-${node.right.value}`;
+                    connections.add(connectionKey);
+                    this.collectConnections(node.right, connections);
+                }
+            }
+
+            addConnection(connectionKey, animate = false) {
+                const [parentValue, childValue] = connectionKey.split('-').map(Number);
+                const parentNode = this.findNode(this.root, parentValue);
+                const childNode = this.findNode(this.root, childValue);
+
+                if (!parentNode || !childNode) return;
+
+                const svg = document.getElementById('treeSvg');
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+
+                line.setAttribute('x1', parentNode.x);
+                line.setAttribute('y1', parentNode.y + 30);
+                line.setAttribute('x2', childNode.x);
+                line.setAttribute('y2', childNode.y + 30);
+                line.setAttribute('class', animate ? 'tree-line new-connection' : 'tree-line');
+
+                this.lineElements.set(connectionKey, line);
+                svg.appendChild(line);
+
+                if (animate) {
+                    setTimeout(() => {
+                        line.setAttribute('class', 'tree-line');
+                    }, 600);
+                }
+            }
+
+            updateConnectionPosition(connectionKey) {
+                const line = this.lineElements.get(connectionKey);
+                if (!line) return;
+
+                const [parentValue, childValue] = connectionKey.split('-').map(Number);
+                const parentNode = this.findNode(this.root, parentValue);
+                const childNode = this.findNode(this.root, childValue);
+
+                if (!parentNode || !childNode) return;
+
+                line.setAttribute('x1', parentNode.x);
+                line.setAttribute('y1', parentNode.y + 30);
+                line.setAttribute('x2', childNode.x);
+                line.setAttribute('y2', childNode.y + 30);
+            }
+
+            removeConnection(connectionKey) {
+                const line = this.lineElements.get(connectionKey);
+                if (line) {
+                    line.remove();
+                    this.lineElements.delete(connectionKey);
+                }
+            }
+
+            findNode(node, value) {
+                if (!node) return null;
+                if (node.value === value) return node;
+
+                const leftResult = this.findNode(node.left, value);
+                if (leftResult) return leftResult;
+
+                return this.findNode(node.right, value);
+            }
+
+            countNodes(node) {
+                if (!node) return 0;
+                return 1 + this.countNodes(node.left) + this.countNodes(node.right);
+            }
+
+            updateStats() {
+                const nodeCount = this.countNodes(this.root);
+                const treeHeight = this.getHeight(this.root);
+
+                document.getElementById('nodeCount').textContent = nodeCount;
+                document.getElementById('treeHeight').textContent = treeHeight;
+                document.getElementById('rotationCount').textContent = this.rotationCount;
+            }
+
+            addNode(value) {
+                if (!nodeExists(this.root, value)) {
+                    this.root = this.insert(this.root, value);
+                    setTimeout(() => {
+                        this.updateVisualization();
+                    }, 100);
+                }
+            }
+
+            clear() {
+                this.root = null;
+                this.rotationCount = 0;
+                this.nodeElements.clear();
+                this.connections.clear();
+                this.lineElements.clear();
+
+                const container = document.getElementById('treeContainer');
+                const nodes = container.querySelectorAll('.tree-node');
+                nodes.forEach(node => node.remove());
+
+                const svg = document.getElementById('treeSvg');
+                svg.innerHTML = '';
+
+                // Reset stats immediately
+                document.getElementById('nodeCount').textContent = '0';
+                document.getElementById('treeHeight').textContent = '0';
+                document.getElementById('rotationCount').textContent = '0';
+                document.getElementById('emptyState').style.display = 'block';
+            }
+        }
+
+        const avlTree = new AVLTree();
+
+        function addCustomNode() {
+            const input = document.getElementById('customValue');
+            const value = parseInt(input.value);
+
+            if (isNaN(value) || value < 1 || value > 999) {
+                // Add visual feedback for invalid input
+                input.style.borderColor = 'rgba(255, 100, 100, 0.8)';
+                input.style.boxShadow = '0 0 10px rgba(255, 100, 100, 0.3)';
+
+                setTimeout(() => {
+                    input.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                    input.style.boxShadow = 'none';
+                }, 1000);
+
+                return;
+            }
+
+            // Check if node already exists
+            if (nodeExists(avlTree.root, value)) {
+                // Add visual feedback for duplicate
+                input.style.borderColor = 'rgba(255, 200, 100, 0.8)';
+                input.style.boxShadow = '0 0 10px rgba(255, 200, 100, 0.3)';
+
+                setTimeout(() => {
+                    input.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                    input.style.boxShadow = 'none';
+                }, 1000);
+
+                return;
+            }
+
+            avlTree.addNode(value);
+            input.value = ''; // Clear input after successful addition
+        }
+
+        function nodeExists(node, value) {
+            if (!node) return false;
+            if (node.value === value) return true;
+            return nodeExists(node.left, value) || nodeExists(node.right, value);
+        }
+
+        function addRandomNode() {
+            const value = Math.floor(Math.random() * 100) + 1;
+            avlTree.addNode(value);
+        }
+
+        function addFiveNodes() {
+            const values = [];
+            for (let i = 0; i < 5; i++) {
+                let value;
+                do {
+                    value = Math.floor(Math.random() * 100) + 1;
+                } while (values.includes(value));
+                values.push(value);
+            }
+
+            values.forEach((value, index) => {
+                setTimeout(() => {
+                    avlTree.addNode(value);
+                }, index * 300);
+            });
+        }
+
+        function clearTree() {
+            avlTree.clear();
+        }
+
+        // Handle Enter key in custom input
+        document.addEventListener('DOMContentLoaded', function () {
+            const customInput = document.getElementById('customValue');
+            customInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    addCustomNode();
+                }
+            });
+        });
+
+        // Initialize
+        avlTree.updateVisualization();
+    </script>
+</body>
+
+</html>
+
+
+
+
+<!-- <!DOCTYPE html> -->
+<!-- <html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AVL Tree Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+            overflow-x: auto;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .custom-input {
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 25px;
+            font-size: 1rem;
+            width: 100px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .custom-input:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.6);
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+        }
+
+        .custom-input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .custom-input::-webkit-outer-spin-button,
+        .custom-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .custom-input[type=number] {
+            -moz-appearance: textfield;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .tree-container {
+            position: relative;
+            min-height: 600px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            overflow: visible;
+            padding: 40px;
+        }
+
+        .tree-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .tree-line {
+            stroke: rgba(255, 255, 255, 0.8);
+            stroke-width: 3;
+            fill: none;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            stroke-linecap: round;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+        }
+
+        .tree-line.new-connection {
+            animation: lineGrow 0.6s ease-out;
+        }
+
+        @keyframes lineGrow {
+            0% {
+                stroke-dasharray: 200;
+                stroke-dashoffset: 200;
+                opacity: 0;
+            }
+
+            100% {
+                stroke-dasharray: 200;
+                stroke-dashoffset: 0;
+                opacity: 1;
+            }
+        }
+
+        .tree-node {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 18px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transform-origin: center;
+        }
+
+        .tree-node:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .tree-node.inserting {
+            animation: nodeInsert 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+
+        .tree-node.rotating {
+            animation: nodeRotate 0.6s ease-in-out;
+        }
+
+        @keyframes nodeInsert {
+            0% {
+                transform: scale(0) rotate(180deg);
+                opacity: 0;
+            }
+
+            50% {
+                transform: scale(1.2) rotate(90deg);
+                opacity: 0.8;
+            }
+
+            100% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+        }
+
+        @keyframes nodeRotate {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.15) rotate(5deg);
+            }
+        }
+
+        .height-indicator {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px 25px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 100px 20px;
+            opacity: 0.7;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+        }
+
+        .empty-state p {
+            font-size: 1.1rem;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .controls {
+                gap: 10px;
+            }
+
+            .btn {
+                padding: 10px 20px;
+                font-size: 0.9rem;
+            }
+
+            .tree-node {
+                width: 50px;
+                height: 50px;
+                font-size: 16px;
+            }
+
+            .stats {
+                gap: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AVL Tree Visualizer</h1>
+            <p>A self-balancing binary search tree with smooth animations</p>
+        </div>
+
+        <div class="controls">
+            <div class="input-group">
+                <input type="number" class="custom-input" id="customValue" placeholder="Value" min="1" max="999">
+                <button class="btn" onclick="addCustomNode()">Add Custom Node</button>
+            </div>
+            <button class="btn" onclick="addRandomNode()">Add Random Node</button>
+            <button class="btn" onclick="addFiveNodes()">Add 5 Random Nodes</button>
+            <button class="btn" onclick="clearTree()">Clear Tree</button>
+        </div>
+
+        <div class="tree-container" id="treeContainer">
+            <svg class="tree-svg" id="treeSvg"></svg>
+            <div class="empty-state" id="emptyState">
+                <h3>Tree is Empty</h3>
+                <p>Click "Add Random Node" to start building your AVL tree</p>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="nodeCount">0</div>
+                <div class="stat-label">Nodes</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="treeHeight">0</div>
+                <div class="stat-label">Height</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="rotationCount">0</div>
+                <div class="stat-label">Rotations</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class AVLNode {
+            constructor(value) {
+                this.value = value;
+                this.left = null;
+                this.right = null;
+                this.height = 1;
+                this.element = null;
+                this.x = 0;
+                this.y = 0;
+            }
+        }
+
+        class AVLTree {
+            constructor() {
+                this.root = null;
+                this.rotationCount = 0;
+                this.nodeElements = new Map();
+                this.connections = new Set(); // Track existing connections
+                this.lineElements = new Map(); // Track line elements
+            }
+
+            getHeight(node) {
+                return node ? node.height : 0;
+            }
+
+            getBalance(node) {
+                return node ? this.getHeight(node.left) - this.getHeight(node.right) : 0;
+            }
+
+            updateHeight(node) {
+                if (node) {
+                    node.height = Math.max(this.getHeight(node.left), this.getHeight(node.right)) + 1;
+                }
+            }
+
+            rotateRight(y, animate = true) {
+                if (animate) this.rotationCount++;
+                const x = y.left;
+                const T2 = x.right;
+
+                x.right = y;
+                y.left = T2;
+
+                this.updateHeight(y);
+                this.updateHeight(x);
+
+                if (animate) {
+                    this.animateRotation([x, y]);
+                }
+
+                return x;
+            }
+
+            rotateLeft(x, animate = true) {
+                if (animate) this.rotationCount++;
+                const y = x.right;
+                const T2 = y.left;
+
+                y.left = x;
+                x.right = T2;
+
+                this.updateHeight(x);
+                this.updateHeight(y);
+
+                if (animate) {
+                    this.animateRotation([x, y]);
+                }
+
+                return y;
+            }
+
+            insert(node, value, animate = true) {
+                if (!node) {
+                    const newNode = new AVLNode(value);
+                    if (animate) {
+                        this.createNodeElement(newNode);
+                    }
+                    return newNode;
+                }
+
+                if (value < node.value) {
+                    node.left = this.insert(node.left, value, animate);
+                } else if (value > node.value) {
+                    node.right = this.insert(node.right, value, animate);
+                } else {
+                    return node; // Duplicate values not allowed
+                }
+
+                this.updateHeight(node);
+
+                const balance = this.getBalance(node);
+
+                // Left Left Case
+                if (balance > 1 && value < node.left.value) {
+                    return this.rotateRight(node, animate);
+                }
+
+                // Right Right Case
+                if (balance < -1 && value > node.right.value) {
+                    return this.rotateLeft(node, animate);
+                }
+
+                // Left Right Case
+                if (balance > 1 && value > node.left.value) {
+                    node.left = this.rotateLeft(node.left, animate);
+                    return this.rotateRight(node, false); // Don't double count
+                }
+
+                // Right Left Case
+                if (balance < -1 && value < node.right.value) {
+                    node.right = this.rotateRight(node.right, animate);
+                    return this.rotateLeft(node, false); // Don't double count
+                }
+
+                return node;
+            }
+
+            createNodeElement(node) {
+                const nodeEl = document.createElement('div');
+                nodeEl.className = 'tree-node';
+                nodeEl.textContent = node.value;
+
+                const heightIndicator = document.createElement('div');
+                heightIndicator.className = 'height-indicator';
+                heightIndicator.textContent = node.height;
+                nodeEl.appendChild(heightIndicator);
+
+                node.element = nodeEl;
+                this.nodeElements.set(node.value, nodeEl);
+                document.getElementById('treeContainer').appendChild(nodeEl);
+
+                // Start insertion animation immediately
+                nodeEl.classList.add('inserting');
+                setTimeout(() => {
+                    nodeEl.classList.remove('inserting');
+                }, 800);
+            }
+
+            animateRotation(nodes) {
+                nodes.forEach(node => {
+                    if (node.element) {
+                        node.element.classList.add('rotating');
+                        setTimeout(() => {
+                            node.element.classList.remove('rotating');
+                        }, 600);
+                    }
+                    // Handle window resize
+                    window.addEventListener('resize', () => {
+                        setTimeout(() => {
+                            avlTree.updateVisualization();
+                        }, 100);
+                    });
+                })
+            }
+
+            calculatePositions(node, x, y, spacing) {
+                if (!node) return;
+
+                node.x = x;
+                node.y = y;
+
+                if (node.left) {
+                    this.calculatePositions(node.left, x - spacing, y + 100, spacing * 0.7);
+                }
+                if (node.right) {
+                    this.calculatePositions(node.right, x + spacing, y + 100, spacing * 0.7);
+                }
+            }
+
+            updateVisualization() {
+                if (!this.root) {
+                    document.getElementById('emptyState').style.display = 'block';
+                    return;
+                }
+
+                document.getElementById('emptyState').style.display = 'none';
+
+                const container = document.getElementById('treeContainer');
+                const containerRect = container.getBoundingClientRect();
+                const centerX = containerRect.width / 2;
+
+                this.calculatePositions(this.root, centerX, 80, 150);
+                this.updateNodePositions(this.root);
+                this.updateConnectionsSmooth();
+                this.updateStats();
+            }
+
+            updateNodePositions(node) {
+                if (!node || !node.element) return;
+
+                node.element.style.left = (node.x - 30) + 'px';
+                node.element.style.top = node.y + 'px';
+
+                const heightIndicator = node.element.querySelector('.height-indicator');
+                if (heightIndicator) {
+                    heightIndicator.textContent = node.height;
+                }
+
+                if (node.left) this.updateNodePositions(node.left);
+                if (node.right) this.updateNodePositions(node.right);
+            }
+
+            updateConnectionsSmooth() {
+                const currentConnections = new Set();
+                this.collectConnections(this.root, currentConnections);
+
+                // Remove connections that no longer exist
+                for (const connection of this.connections) {
+                    if (!currentConnections.has(connection)) {
+                        this.removeConnection(connection);
+                    }
+                }
+
+                // Add new connections
+                for (const connection of currentConnections) {
+                    if (!this.connections.has(connection)) {
+                        this.addConnection(connection, true); // animate new connections
+                    } else {
+                        // Update existing connection positions
+                        this.updateConnectionPosition(connection);
+                    }
+                }
+
+                this.connections = currentConnections;
+            }
+
+            collectConnections(node, connections) {
+                if (!node) return;
+
+                if (node.left) {
+                    const connectionKey = `${node.value}-${node.left.value}`;
+                    connections.add(connectionKey);
+                    this.collectConnections(node.left, connections);
+                }
+
+                if (node.right) {
+                    const connectionKey = `${node.value}-${node.right.value}`;
+                    connections.add(connectionKey);
+                    this.collectConnections(node.right, connections);
+                }
+            }
+
+            addConnection(connectionKey, animate = false) {
+                const [parentValue, childValue] = connectionKey.split('-').map(Number);
+                const parentNode = this.findNode(this.root, parentValue);
+                const childNode = this.findNode(this.root, childValue);
+
+                if (!parentNode || !childNode) return;
+
+                const svg = document.getElementById('treeSvg');
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+
+                line.setAttribute('x1', parentNode.x);
+                line.setAttribute('y1', parentNode.y + 30);
+                line.setAttribute('x2', childNode.x);
+                line.setAttribute('y2', childNode.y + 30);
+                line.setAttribute('class', animate ? 'tree-line new-connection' : 'tree-line');
+
+                this.lineElements.set(connectionKey, line);
+                svg.appendChild(line);
+
+                if (animate) {
+                    setTimeout(() => {
+                        line.setAttribute('class', 'tree-line');
+                    }, 600);
+                }
+            }
+
+            updateConnectionPosition(connectionKey) {
+                const line = this.lineElements.get(connectionKey);
+                if (!line) return;
+
+                const [parentValue, childValue] = connectionKey.split('-').map(Number);
+                const parentNode = this.findNode(this.root, parentValue);
+                const childNode = this.findNode(this.root, childValue);
+
+                if (!parentNode || !childNode) return;
+
+                line.setAttribute('x1', parentNode.x);
+                line.setAttribute('y1', parentNode.y + 30);
+                line.setAttribute('x2', childNode.x);
+                line.setAttribute('y2', childNode.y + 30);
+            }
+
+            removeConnection(connectionKey) {
+                const line = this.lineElements.get(connectionKey);
+                if (line) {
+                    line.remove();
+                    this.lineElements.delete(connectionKey);
+                }
+            }
+
+            findNode(node, value) {
+                if (!node) return null;
+                if (node.value === value) return node;
+
+                const leftResult = this.findNode(node.left, value);
+                if (leftResult) return leftResult;
+
+                return this.findNode(node.right, value);
+            }
+
+            countNodes(node) {
+                if (!node) return 0;
+                return 1 + this.countNodes(node.left) + this.countNodes(node.right);
+            }
+
+            updateStats() {
+                const nodeCount = this.countNodes(this.root);
+                const treeHeight = this.getHeight(this.root);
+
+                document.getElementById('nodeCount').textContent = nodeCount;
+                document.getElementById('treeHeight').textContent = treeHeight;
+                document.getElementById('rotationCount').textContent = this.rotationCount;
+            }
+
+            addNode(value) {
+                this.root = this.insert(this.root, value);
+                setTimeout(() => {
+                    this.updateVisualization();
+                }, 100);
+            }
+
+            clear() {
+                this.root = null;
+                this.rotationCount = 0;
+                this.nodeElements.clear();
+                this.connections.clear();
+                this.lineElements.clear();
+
+                const container = document.getElementById('treeContainer');
+                const nodes = container.querySelectorAll('.tree-node');
+                nodes.forEach(node => node.remove());
+
+                const svg = document.getElementById('treeSvg');
+                svg.innerHTML = '';
+
+                // Reset stats immediately
+                document.getElementById('nodeCount').textContent = '0';
+                document.getElementById('treeHeight').textContent = '0';
+                document.getElementById('rotationCount').textContent = '0';
+                document.getElementById('emptyState').style.display = 'block';
+            }
+        }
+
+        const avlTree = new AVLTree();
+
+        function addCustomNode() {
+            const input = document.getElementById('customValue');
+            const value = parseInt(input.value);
+
+            if (isNaN(value) || value < 1 || value > 999) {
+                // Add visual feedback for invalid input
+                input.style.borderColor = 'rgba(255, 100, 100, 0.8)';
+                input.style.boxShadow = '0 0 10px rgba(255, 100, 100, 0.3)';
+
+                setTimeout(() => {
+                    input.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                    input.style.boxShadow = 'none';
+                }, 1000);
+
+                return;
+            }
+
+            // Check if node already exists
+            if (nodeExists(avlTree.root, value)) {
+                // Add visual feedback for duplicate
+                input.style.borderColor = 'rgba(255, 200, 100, 0.8)';
+                input.style.boxShadow = '0 0 10px rgba(255, 200, 100, 0.3)';
+
+                setTimeout(() => {
+                    input.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                    input.style.boxShadow = 'none';
+                }, 1000);
+
+                return;
+            }
+
+            avlTree.addNode(value);
+            input.value = ''; // Clear input after successful addition
+        }
+
+        function nodeExists(node, value) {
+            if (!node) return false;
+            if (node.value === value) return true;
+            return nodeExists(node.left, value) || nodeExists(node.right, value);
+        }
+
+        function addRandomNode() {
+            const value = Math.floor(Math.random() * 100) + 1;
+            avlTree.addNode(value);
+        }
+
+        function addFiveNodes() {
+            const values = [];
+            for (let i = 0; i < 5; i++) {
+                let value;
+                do {
+                    value = Math.floor(Math.random() * 100) + 1;
+                } while (values.includes(value));
+                values.push(value);
+            }
+
+            values.forEach((value, index) => {
+                setTimeout(() => {
+                    avlTree.addNode(value);
+                }, index * 300);
+            });
+        }
+
+        function clearTree() {
+            avlTree.clear();
+        }
+
+        // Handle Enter key in custom input
+        document.addEventListener('DOMContentLoaded', function () {
+            const customInput = document.getElementById('customValue');
+            customInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    addCustomNode();
+                }
+            });
+        });
+
+        // Initialize
+        avlTree.updateVisualization();
+    </script>
+</body>
+
+</html> -->

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"strings"
-
 	"github.com/NickOvt/go-chain-trees/utils"
 )
 
@@ -16,11 +14,31 @@ type Node struct {
 	Height      int            // Height used for balancing
 	LeftChild   *Node
 	RightChild  *Node
-	NodeHash    []byte // Hash of Key + Data (Current node's hash)
-	SubtreeHash []byte // NodeHash + NodeHash of Left Child + NodeHash of Right Child
+	NodeHash    utils.Hash // Hash of Key + Data (Current node's hash)
+	SubtreeHash utils.Hash // NodeHash + NodeHash of Left Child + NodeHash of Right Child
 }
 
-// Main AVL Tree struct
+func (node *Node) getNodeHash() utils.Hash {
+	if node == nil {
+		return nil
+	}
+
+	return node.NodeHash
+}
+
+func (node *Node) calculateSubtreeHash() (utils.Hash, error) {
+	encodedCBORList, err := utils.EncodeCBORList(node.getNodeHash(), node.LeftChild.getNodeHash(), node.RightChild.getNodeHash())
+
+	if err != nil {
+		return nil, err
+	}
+
+	node.SubtreeHash = utils.ConcatDataAndGenerateHash(encodedCBORList...)
+
+	return node.SubtreeHash, nil
+}
+
+// AVLHashTree Main AVL Tree struct
 type AVLHashTree struct {
 	Root *Node
 }
@@ -45,10 +63,15 @@ func getBalanceFactor(node *Node) int {
 }
 
 func getMinNode(node *Node) *Node {
-	if node == nil || node.LeftChild == nil {
+	if node == nil {
 		return nil
 	}
-	return getMinNode(node.LeftChild)
+
+	currNode := node
+	for currNode.LeftChild != nil {
+		currNode = currNode.LeftChild
+	}
+	return currNode
 }
 
 // Search for node in AVL Hash Tree
@@ -64,7 +87,7 @@ func getMinNode(node *Node) *Node {
 func (t *AVLHashTree) Search(key utils.CBORData) (any, error) {
 	node := t.search(t.Root, key)
 	if node == nil {
-		return nil, errors.New("Node with given hashkey not found")
+		return nil, errors.New("node with given hashkey not found")
 	}
 
 	dataDecoded, err := utils.DecodeCBOR[int](node.Data)
@@ -103,6 +126,9 @@ func (t *AVLHashTree) rotateLeft(node *Node) *Node {
 	node.Height = 1 + max(height(node.LeftChild), height(node.RightChild))
 	B.Height = 1 + max(height(B.LeftChild), height(B.RightChild))
 
+	node.calculateSubtreeHash()
+	B.calculateSubtreeHash()
+
 	return B
 }
 
@@ -118,10 +144,13 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 	node.Height = 1 + max(height(node.LeftChild), height(node.RightChild))
 	A.Height = 1 + max(height(A.LeftChild), height(A.RightChild))
 
+	node.calculateSubtreeHash() // Old root first
+	A.calculateSubtreeHash()
+
 	return A
 }
 
-// Expect CBOR data directly
+// InsertCBOR Expect CBOR data directly
 func (t *AVLHashTree) InsertCBOR(keyCBOR utils.CBORData, dataCBOR utils.CBORData) error {
 	// Encode the hash bytes to CBOR
 	t.Root = t.insert(t.Root, keyCBOR, dataCBOR)
@@ -139,7 +168,7 @@ func (t *AVLHashTree) Insert(key utils.Hash, data any) error {
 	}
 
 	// Encode data to CBOR only if it's not nil
-	var dataCBOR []byte
+	var dataCBOR utils.CBORData
 	if data != nil {
 		var err error
 		dataCBOR, err = utils.EncodeCBOR(data)
@@ -153,6 +182,11 @@ func (t *AVLHashTree) Insert(key utils.Hash, data any) error {
 }
 
 func (t *AVLHashTree) insert(root *Node, key utils.CBORData, data utils.CBORData) *Node {
+	newRoot, _ := t.insertRecursive(root, key, data)
+	return newRoot
+}
+
+func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils.CBORData) (*Node, bool) {
 	if root == nil {
 		return &Node{
 			Key:        key,
@@ -161,18 +195,28 @@ func (t *AVLHashTree) insert(root *Node, key utils.CBORData, data utils.CBORData
 			LeftChild:  nil,
 			RightChild: nil,
 			NodeHash:   utils.ConcatDataAndGenerateHash(key, data),
-		}
+		}, true
 	}
 
+	var changed bool
 	cmp := bytes.Compare(key, root.Key)
 
 	if cmp < 0 {
-		root.LeftChild = t.insert(root.LeftChild, key, data)
+		root.LeftChild, changed = t.insertRecursive(root.LeftChild, key, data)
 	} else if cmp > 0 {
-		root.RightChild = t.insert(root.RightChild, key, data)
+		root.RightChild, changed = t.insertRecursive(root.RightChild, key, data)
 	} else {
 		// duplicate
-		root.RightChild = t.insert(root.RightChild, key, data)
+		possibleNewNodeHash := utils.ConcatDataAndGenerateHash(key, data)
+		if !bytes.Equal(root.getNodeHash(), possibleNewNodeHash) {
+			root.Data = data
+			root.NodeHash = possibleNewNodeHash
+			changed = true
+		}
+	}
+
+	if !changed {
+		return root, false
 	}
 
 	root.Height = 1 + max(height(root.LeftChild), height(root.RightChild))
@@ -180,33 +224,40 @@ func (t *AVLHashTree) insert(root *Node, key utils.CBORData, data utils.CBORData
 	balanceFactor := getBalanceFactor(root)
 
 	if balanceFactor > 1 && bytes.Compare(key, root.LeftChild.Key) < 0 {
-		return t.rotateRight(root)
+		root = t.rotateRight(root)
 	}
 
 	if balanceFactor < -1 && bytes.Compare(key, root.RightChild.Key) > 0 {
-		return t.rotateLeft(root)
+		root = t.rotateLeft(root)
 	}
 
 	if balanceFactor > 1 && bytes.Compare(key, root.LeftChild.Key) > 0 {
 		root.LeftChild = t.rotateLeft(root.LeftChild)
-		return t.rotateRight(root)
+		root = t.rotateRight(root)
 	}
 
 	if balanceFactor < -1 && bytes.Compare(key, root.RightChild.Key) < 0 {
 		root.RightChild = t.rotateRight(root.RightChild)
-		return t.rotateLeft(root)
+		root = t.rotateLeft(root)
 	}
 
-	return root
+	// Recalculate Subtree Hash for root here, after insert and rotations
+	_, err := root.calculateSubtreeHash()
+	if err != nil {
+		// handle error
+		fmt.Println("Calculate Subtree Hash Failed")
+	}
+
+	return root, true
 }
 
-// Expect CBOR key
+// DeleteCBOR Expect CBOR key
 func (t *AVLHashTree) DeleteCBOR(key utils.CBORData) error {
 	t.Root = t.delete(t.Root, key)
 	return nil
 }
 
-// Expect raw key hash - Encode it to CBOR
+// Delete Expect raw key hash - Encode it to CBOR
 func (t *AVLHashTree) Delete(key utils.Hash) error {
 	encodedKey, err := utils.EncodeCBOR(key)
 	if err != nil {
@@ -271,26 +322,31 @@ func (t *AVLHashTree) delete(root *Node, key utils.CBORData) *Node {
 }
 
 func (t *AVLHashTree) PrintTree() {
-	if t.Root != nil {
-		// Create a queue for level-order traversal
-		queue := []*Node{t.Root}
-		levelOrder := strings.Builder{}
-		levelOrderWithDetails := strings.Builder{}
+	if t.Root == nil {
+		fmt.Println("\nAVL tree is empty!")
+		return
+	}
 
-		// Process each node in the queue
-		for len(queue) > 0 {
+	// Create a queue for level-order traversal
+	queue := []*Node{t.Root}
+	level := 0
+
+	fmt.Println("\nAVL Tree Structure:")
+	for len(queue) > 0 {
+		// Number of nodes at the current level
+		levelSize := len(queue)
+		fmt.Printf("Level %d: ", level)
+
+		// Process all nodes at the current level
+		for i := 0; i < levelSize; i++ {
 			// Dequeue the front node
 			node := queue[0]
 			queue = queue[1:]
 
-			// Add the key to the level-order string
-			levelOrder.WriteString(fmt.Sprintf("%x ", node.Key[0:4]))
+			// Print the node's key (first 4 bytes for brevity)
+			fmt.Printf("%x (h=%d, bf=%d)  ", node.Key[0:4], node.Height, getBalanceFactor(node))
 
-			// Add the key with height and balance factor to the detailed string
-			levelOrderWithDetails.WriteString(fmt.Sprintf("%x(h=%d, bf=%d) ",
-				node.Key[0:4], node.Height, getBalanceFactor(node)))
-
-			// Add children to the queue
+			// Enqueue children
 			if node.LeftChild != nil {
 				queue = append(queue, node.LeftChild)
 			}
@@ -299,12 +355,60 @@ func (t *AVLHashTree) PrintTree() {
 			}
 		}
 
-		// Print the results
-		fmt.Println("\nLevel-order traversal:")
-		fmt.Println(levelOrder.String())
-		fmt.Println("\nLevel-order traversal with height and balance factor:")
-		fmt.Println(levelOrderWithDetails.String())
-	} else {
-		fmt.Println("\nAVL tree is empty!")
+		fmt.Println() // Move to the next line for the next level
+		level++
 	}
+}
+
+func (t *AVLHashTree) ValidateTree() error {
+	if t.Root == nil {
+		return nil // Empty tree is valid
+	}
+
+	return t.validateNode(t.Root)
+}
+
+// validateNode recursively validates a node and all its children
+func (t *AVLHashTree) validateNode(node *Node) error {
+	if node == nil {
+		return nil
+	}
+
+	// 1. Validate NodeHash (Key + Data)
+	expectedNodeHash := utils.ConcatDataAndGenerateHash(node.Key, node.Data)
+	if !bytes.Equal(node.NodeHash, expectedNodeHash) {
+		return fmt.Errorf("invalid NodeHash for key %x: expected %x, got %x",
+			node.Key[:min(len(node.Key), 8)], expectedNodeHash, node.NodeHash)
+	}
+
+	// 2. Recursively validate children first
+	if err := t.validateNode(node.LeftChild); err != nil {
+		return err
+	}
+	if err := t.validateNode(node.RightChild); err != nil {
+		return err
+	}
+
+	// 3. Validate SubtreeHash (NodeHash + LeftChildNodeHash + RightChildNodeHash)
+	leftHash := node.LeftChild.getNodeHash()
+	rightHash := node.RightChild.getNodeHash()
+
+	// The SubtreeHash should include the current node's hash plus child hashes
+	// First encode all three hashes to CBOR
+	if leftHash != nil && rightHash != nil {
+		// Subtree hash is present only if there are any child nodes
+		encodedCBORList, err := utils.EncodeCBORList(node.NodeHash, leftHash, rightHash)
+		if err != nil {
+			return fmt.Errorf("failed to encode node and child hashes for key %x: %v",
+				node.Key[:min(len(node.Key), 8)], err)
+		}
+
+		expectedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+		if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
+			return fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x",
+				node.Key[:min(len(node.Key), 8)], expectedSubtreeHash, node.SubtreeHash)
+		}
+	}
+
+	return nil
 }
