@@ -7,7 +7,9 @@ import (
 	"github.com/NickOvt/go-chain-trees/utils"
 )
 
-// Node represents a node in the AVL tree
+// Node represents a node in the AVL tree.
+// each node stores CBOR-encoded data and maintains cryptographic hashes for integrity verification.
+// The node contains both its own hash and a subtree hash that includes all descendant nodes.
 type Node struct {
 	Key         utils.CBORData // Hash value used as key = ID, CBOR
 	Data        utils.CBORData // Original data, CBOR
@@ -18,6 +20,11 @@ type Node struct {
 	SubtreeHash utils.Hash // NodeHash + NodeHash of Left Child + NodeHash of Right Child
 }
 
+// Returns the NodeHash of the current node.
+// Safely handles nil nodes by returning nil.
+//
+// Returns:
+//   - utils.Hash: The node's hash, or nil if the node is nil
 func (node *Node) getNodeHash() utils.Hash {
 	if node == nil {
 		return nil
@@ -26,6 +33,13 @@ func (node *Node) getNodeHash() utils.Hash {
 	return node.NodeHash
 }
 
+// Computes and updates the SubtreeHash for the current node.
+// The subtree hash is calculated by combining the current node's hash with the
+// hashes of its left and right children.
+//
+// Returns:
+//   - utils.Hash: The calculated subtree hash
+//   - error: An error if CBOR encoding fails, nil otherwise
 func (node *Node) calculateSubtreeHash() (utils.Hash, error) {
 	encodedCBORList, err := utils.EncodeCBORList(node.getNodeHash(), node.LeftChild.getNodeHash(), node.RightChild.getNodeHash())
 
@@ -44,10 +58,20 @@ type AVLHashTree struct {
 }
 
 // NewAVLHashTree creates a new, empty AVL hash tree
+//
+// Returns:
+//   - *AVLHashTree: Empty AVLHashTree struct
 func NewAVLHashTree() *AVLHashTree {
 	return &AVLHashTree{Root: nil}
 }
 
+// Returns the height of the given node in the tree.
+//
+// Parameters:
+//   - node: The *Node pointer whose height to retrieve
+//
+// Returns:
+//   - int: The height of the node, or 0 if the node is nil
 func height(node *Node) int {
 	if node == nil {
 		return 0
@@ -55,6 +79,13 @@ func height(node *Node) int {
 	return node.Height
 }
 
+// Calculates the balance factor of the given node.
+//
+// Parameters:
+//   - node: The *Node pointer whose balance factor to calculate
+//
+// Returns:
+//   - int: The balance factor of the node, or 0 if the node is nil
 func getBalanceFactor(node *Node) int {
 	if node == nil {
 		return 0
@@ -62,6 +93,14 @@ func getBalanceFactor(node *Node) int {
 	return height(node.LeftChild) - height(node.RightChild)
 }
 
+// Finds and returns the node with the minimum key in the subtree
+// rooted at the given node.
+//
+// Parameters:
+//   - node: The root *Node pointer of the subtree to search
+//
+// Returns:
+//   - *Node: The node with the minimum key, or nil if the input node is nil
 func getMinNode(node *Node) *Node {
 	if node == nil {
 		return nil
@@ -77,13 +116,10 @@ func getMinNode(node *Node) *Node {
 // Search for node in AVL Hash Tree
 //
 // Params:
-//
-// Key: CBOR bytes array
+// Key: utils.CBORData CBOR Data
 //
 // Returns:
-// Node data as raw bytes
-//
-// Optional error
+// Node data as the provided decode datatype or an error
 func (t *AVLHashTree) Search(key utils.CBORData) (any, error) {
 	node := t.search(t.Root, key)
 	if node == nil {
@@ -150,16 +186,29 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 	return A
 }
 
-// InsertCBOR Expect CBOR data directly
+// InsertCBOR Insert CBOR data directly into the AVL Hash Tree
+//
+// Params:
+//   - keyCBOR: utils.CBORData key encoded as CBOR
+//   - dataCBOR: utils.CBORData data encoded as CBOR
+//
+// Returns:
+//   - nil
 func (t *AVLHashTree) InsertCBOR(keyCBOR utils.CBORData, dataCBOR utils.CBORData) error {
 	// Encode the hash bytes to CBOR
 	t.Root = t.insert(t.Root, keyCBOR, dataCBOR)
 	return nil
 }
 
-// Insert arbitrary hash as key, and data
-//
+// Insert data into the AVL Hash Tree.
 // Hash and Data are converted to CBOR before inserting
+//
+// Params:
+//   - key: utils.Hash of key
+//   - data: any data
+//
+// Returns:
+//   - nil
 func (t *AVLHashTree) Insert(key utils.Hash, data any) error {
 	// Encode the hash bytes to CBOR
 	encodedKey, err := utils.EncodeCBOR(key)
@@ -251,13 +300,25 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 	return root, true
 }
 
-// DeleteCBOR Expect CBOR key
+// DeleteCBOR Deletes a node from the AVL Hash Tree based on the provided key
+//
+// Params:
+//   - key: utils.CBORData key of the node to delete encoded as CBOR
+//
+// Returns:
+//   - nil
 func (t *AVLHashTree) DeleteCBOR(key utils.CBORData) error {
 	t.Root = t.delete(t.Root, key)
 	return nil
 }
 
-// Delete Expect raw key hash - Encode it to CBOR
+// Delete Deletes a node from the AVL Hash Tree based on the provided key
+//
+// Params:
+//   - key: raw utils.Hash of key of the node to delete
+//
+// Returns:
+//   - nil
 func (t *AVLHashTree) Delete(key utils.Hash) error {
 	encodedKey, err := utils.EncodeCBOR(key)
 	if err != nil {
@@ -337,6 +398,19 @@ func (t *AVLHashTree) deleteRecursive(root *Node, key utils.CBORData) (*Node, bo
 	return root, true
 }
 
+// PrintTree prints a visual representation of the AVL tree structure to stdout.
+// It performs a level-order (breadth-first) traversal and displays each level
+// of the tree on a separate line. For each node, it shows:
+// - The first 4 bytes of the node's key in hexadecimal format
+// - The node's height (h=)
+// - The node's balance factor (bf=)
+//
+// If the tree is empty, it prints a message indicating so.
+//
+// Example output:
+//
+//	Level 0: a1b2c3d4 (h=2, bf=0)
+//	Level 1: e5f6a7b8 (h=1, bf=-1)  c9d10e11 (h=1, bf=0)
 func (t *AVLHashTree) PrintTree() {
 	if t.Root == nil {
 		fmt.Println("\nAVL tree is empty!")
@@ -376,12 +450,33 @@ func (t *AVLHashTree) PrintTree() {
 	}
 }
 
+// ValidateTree performs a comprehensive validation of the AVL tree structure
+// and cryptographic integrity. It verifies that all nodes maintain proper
+// hash relationships and that the hashes are intact.
+// The validation checks include:
+//   - NodeHash integrity (Key + Data hashing)
+//   - SubtreeHash integrity (node hash + children hashes)
+//   - Recursive validation of all nodes in the tree
+//
+// An empty tree (nil root) is considered valid.
+//
+// Returns:
+//   - error: nil if the tree is valid, otherwise an error describing the
+//     first validation failure encountered with details about which
+//     node failed and what type of hash mismatch occurred
 func (t *AVLHashTree) ValidateTree() error {
 	if t.Root == nil {
 		return nil // Empty tree is valid
 	}
 
-	return t.validateNode(t.Root)
+	err := t.validateNode(t.Root)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Tree validation succeeded")
+	return nil
 }
 
 // validateNode recursively validates a node and all its children
