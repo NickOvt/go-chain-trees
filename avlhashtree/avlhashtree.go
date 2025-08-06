@@ -469,7 +469,14 @@ func (t *AVLHashTree) ValidateTree() error {
 		return nil // Empty tree is valid
 	}
 
-	return t.validateNode(t.Root)
+	err := t.validateNode(t.Root)
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Tree validation succeeded")
+	return nil
 }
 
 // validateNode recursively validates a node and all its children
