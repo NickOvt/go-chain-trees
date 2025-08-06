@@ -6,10 +6,21 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
+// CBORData represents encoded CBOR data as a byte slice
 type CBORData []byte
+
+// Hash represents a cryptographic hash as a byte slice
 type Hash []byte
 
-// EncodeCBOR Encode any given value to CBOR
+// EncodeCBOR encodes any given value to CBOR format.
+// It accepts any type that can be marshaled to CBOR.
+//
+// Parameters:
+//   - v: The value to encode (can be any type)
+//
+// Returns:
+//   - CBORData: The CBOR-encoded data as bytes
+//   - error: An error if encoding fails, nil otherwise
 func EncodeCBOR(v any) (CBORData, error) {
 	b, err := cbor.Marshal(v)
 
@@ -20,7 +31,18 @@ func EncodeCBOR(v any) (CBORData, error) {
 	return b, nil
 }
 
-// DecodeCBOR Decode CBOR value to data
+// DecodeCBOR decodes CBOR data into the specified type T.
+// Uses Go generics.
+//
+// Type Parameters:
+//   - T: The target type to decode into
+//
+// Parameters:
+//   - cborData: The CBOR-encoded data to decode
+//
+// Returns:
+//   - T: The decoded value of type T
+//   - error: An error if decoding fails, nil otherwise
 func DecodeCBOR[T any](cborData CBORData) (T, error) {
 	var output T
 	err := cbor.Unmarshal(cborData, &output)
@@ -32,13 +54,26 @@ func DecodeCBOR[T any](cborData CBORData) (T, error) {
 	return output, nil
 }
 
-// GenerateHash Generate hash of given bytes
+// GenerateHash generates a SHA3-384 hash of the given byte data.
+//
+// Parameters:
+//   - data: The byte slice to hash
+//
+// Returns:
+//   - Hash: The SHA3-384 hash as a byte slice
 func GenerateHash(data []byte) Hash {
 	hash := sha3.Sum384(data)
 	return hash[:]
 }
 
-// ConcatDataAndGenerateHash Given n CBOR byte arrays concat them and calculate hash
+// ConcatDataAndGenerateHash concatenates multiple CBOR byte arrays
+// and calculates their combined SHA3-384 hash.
+//
+// Parameters:
+//   - data: Variable number of CBORData slices to concatenate and hash
+//
+// Returns:
+//   - Hash: The SHA3-384 hash of the concatenated data
 func ConcatDataAndGenerateHash(data ...CBORData) Hash {
 	// Calculate total length needed to preallocate memory
 	totalLen := 0
@@ -55,20 +90,27 @@ func ConcatDataAndGenerateHash(data ...CBORData) Hash {
 	return GenerateHash(combined)
 }
 
-// EncodeCBORList Encode any given value to CBOR. Accepts multiple values
-// If there is an error with any of the values then whole function
-// returns an error
+// EncodeCBORList encodes multiple values to CBOR format and returns them
+// as a slice of CBORData. If encoding fails for any value, the entire
+// operation fails and returns an error.
+//
+// Parameters:
+//   - v: Variable number of values to encode (each can be any type)
+//
+// Returns:
+//   - []CBORData: A slice containing the CBOR-encoded data for each input value
+//   - error: An error if encoding fails for any value, nil otherwise
 func EncodeCBORList(v ...any) ([]CBORData, error) {
 	cborDataList := make([]CBORData, len(v))
 
 	for index, value := range v {
-		b, err := cbor.Marshal(value)
+		encodedData, err := EncodeCBOR(value)
 
 		if err != nil {
 			return nil, err
 		}
 
-		cborDataList[index] = b
+		cborDataList[index] = encodedData
 	}
 
 	return cborDataList, nil
