@@ -13,43 +13,6 @@ func GetRoot(c *gin.Context) {
 	})
 }
 
-func GetHello(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Hello from Gin!",
-	})
-}
-
-func GetHelloWithName(c *gin.Context) {
-	name := c.Param("name")
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Hello, " + name + "!",
-	})
-}
-
-func GetGreet(c *gin.Context) {
-	name := c.DefaultQuery("name", "World")
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Hello, " + name + "!",
-	})
-}
-
-// POST handlers
-func PostEcho(c *gin.Context) {
-	var jsonData map[string]interface{}
-	if err := c.ShouldBindJSON(&jsonData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid JSON",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Data received successfully",
-		"data":    jsonData,
-	})
-}
-
 func GetHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",
