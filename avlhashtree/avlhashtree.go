@@ -126,7 +126,7 @@ func (t *AVLHashTree) Search(key utils.CBORData) (any, error) {
 		return nil, errors.New("node with given hashkey not found")
 	}
 
-	dataDecoded, err := utils.DecodeCBOR[int](node.Data)
+	dataDecoded, err := utils.DecodeCBOR[any](node.Data)
 
 	if err != nil {
 		return nil, err

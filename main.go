@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/NickOvt/go-chain-trees/api"
+	"github.com/gin-gonic/gin"
 	"log"
 	"strconv"
 
@@ -41,5 +43,16 @@ func main() {
 
 	if err := avl.ValidateTree(); err != nil {
 		fmt.Printf("Tree validation failed: %v\n", err)
+	}
+
+	r := gin.Default()
+
+	avlHashTreeService := api.NewAVLHashTreeService(avlhashtree.NewAVLHashTree())
+	api.SetupRoutes(r)
+	api.SetupRoutesWithService(r, avlHashTreeService) // Add Service routes
+
+	err := r.Run(":8080")
+	if err != nil {
+		fmt.Println(fmt.Errorf("An error occurred when starting server: %v\n", err))
 	}
 }
