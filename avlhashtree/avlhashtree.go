@@ -508,7 +508,7 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 		return err
 	}
 
-	// 3. Validate SubtreeHash (NodeHash + LeftChildNodeHash + RightChildNodeHash)
+	// 3. Validate SubtreeHash (NodeHash + Subtree Hash of Left Child + Subtree Hash of Right Child)
 	leftHash := node.LeftChild.getNodeSubtreeHash()
 	rightHash := node.RightChild.getNodeSubtreeHash()
 
