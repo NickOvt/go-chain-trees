@@ -17,7 +17,7 @@ type Node struct {
 	LeftChild   *Node
 	RightChild  *Node
 	NodeHash    utils.Hash // Hash of Key + Data (Current node's hash)
-	SubtreeHash utils.Hash // NodeHash + NodeHash of Left Child + NodeHash of Right Child
+	SubtreeHash utils.Hash // NodeHash + SubtreeHash of Left Child + SubtreeHash of Right Child
 }
 
 // Returns the NodeHash of the current node.
@@ -33,6 +33,14 @@ func (node *Node) getNodeHash() utils.Hash {
 	return node.NodeHash
 }
 
+func (node *Node) getNodeSubtreeHash() utils.Hash {
+	if node == nil {
+		return nil
+	}
+
+	return node.SubtreeHash
+}
+
 // Computes and updates the SubtreeHash for the current node.
 // The subtree hash is calculated by combining the current node's hash with the
 // hashes of its left and right children.
@@ -41,7 +49,7 @@ func (node *Node) getNodeHash() utils.Hash {
 //   - utils.Hash: The calculated subtree hash
 //   - error: An error if CBOR encoding fails, nil otherwise
 func (node *Node) calculateSubtreeHash() (utils.Hash, error) {
-	encodedCBORList, err := utils.EncodeCBORList(node.getNodeHash(), node.LeftChild.getNodeHash(), node.RightChild.getNodeHash())
+	encodedCBORList, err := utils.EncodeCBORList(node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash())
 
 	if err != nil {
 		return nil, err
@@ -501,8 +509,8 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 	}
 
 	// 3. Validate SubtreeHash (NodeHash + LeftChildNodeHash + RightChildNodeHash)
-	leftHash := node.LeftChild.getNodeHash()
-	rightHash := node.RightChild.getNodeHash()
+	leftHash := node.LeftChild.getNodeSubtreeHash()
+	rightHash := node.RightChild.getNodeSubtreeHash()
 
 	// The SubtreeHash should include the current node's hash plus child hashes
 	// First encode all three hashes to CBOR
