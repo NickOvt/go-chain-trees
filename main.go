@@ -45,6 +45,19 @@ func main() {
 		fmt.Printf("Tree validation failed: %v\n", err)
 	}
 
+	search2, _ := utils.EncodeCBOR(utils.GenerateHash([]byte(strconv.Itoa(13))))
+	inclusionProof, _ := avl.GenerateInclusionExclusionProof(search2)
+
+	proofCbor, _ := utils.EncodeCBOR(inclusionProof.ToPublicProof())
+
+	fmt.Println(fmt.Sprintf("%x", proofCbor))
+	//inclusionProof.Direction = "left"
+
+	fmt.Println("proved")
+	res, verifErr := avl.VerifyProof(inclusionProof)
+
+	fmt.Println(res, verifErr)
+
 	r := gin.Default()
 
 	avlHashTreeService := api.NewAVLHashTreeService(avlhashtree.NewAVLHashTree())

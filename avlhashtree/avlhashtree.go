@@ -531,3 +531,307 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 
 	return nil
 }
+
+type CryptographicProof struct {
+	RootHash  utils.Hash     // Complete hashChain
+	TargetKey utils.CBORData // Key for which to generate inclusion/exclusion proof
+	Found     bool           // Inclusion proved
+	Path      []*Node        // Hash Chain Path
+	Direction string         // If inclusion not proved specify what direction node would be required
+	ChainSize int            // Size hash chain path
+}
+
+// TODO: Return Proof as CBOR bytes
+
+func (t *AVLHashTree) GenerateInclusionExclusionProof(key utils.CBORData) (*CryptographicProof, error) {
+	if t.Root == nil {
+		return &CryptographicProof{
+			RootHash:  nil,
+			TargetKey: key,
+			Found:     false,
+			Path:      []*Node{},
+			ChainSize: 0,
+		}, nil
+	}
+
+	proof := &CryptographicProof{
+		RootHash:  t.Root.getNodeSubtreeHash(),
+		TargetKey: key,
+		Found:     false,
+		Path:      []*Node{},
+		ChainSize: 0,
+	}
+
+	t.generateInclusionExclusionProofRecursive(t.Root, key, "root", proof)
+
+	return proof, nil
+}
+
+func (t *AVLHashTree) generateInclusionExclusionProofRecursive(node *Node, targetKey utils.CBORData, direction string, proof *CryptographicProof) bool {
+	if node == nil {
+		proof.Direction = direction // Node not found so add child that should've been
+		return false
+	}
+
+	proof.ChainSize++
+
+	cmp := bytes.Compare(targetKey, node.Key)
+
+	if cmp == 0 {
+		proof.Found = true
+		proof.Path = append(proof.Path, node)
+		return true
+	}
+
+	proof.Path = append(proof.Path, node)
+
+	if cmp < 0 {
+		// Go left
+		return t.generateInclusionExclusionProofRecursive(node.LeftChild, targetKey, "left", proof)
+	} else {
+		// Go right
+		return t.generateInclusionExclusionProofRecursive(node.RightChild, targetKey, "right", proof)
+	}
+}
+
+type PublicCryptographicProof struct {
+	RootHash  utils.Hash                      `cbor:"1,keyasint"`
+	TargetKey utils.CBORData                  `cbor:"2,keyasint"`
+	Found     bool                            `cbor:"3,keyasint"`
+	Path      []*PublicCryptographicProofNode `cbor:"4,keyasint"`
+	Direction string                          `cbor:"5,keyasint, omitempty"`
+}
+
+type PublicCryptographicProofNode struct {
+	Key                   utils.CBORData `cbor:"1,keyasint"`
+	Data                  utils.CBORData `cbor:"2,keyasint"`
+	NodeHash              utils.Hash     `cbor:"3,keyasint"`
+	LeftChildSubtreeHash  utils.Hash     `cbor:"4,keyasint, omitempty"`
+	RightChildSubtreeHash utils.Hash     `cbor:"5,keyasint, omitempty"`
+}
+
+func (proof *CryptographicProof) ToPublicProof() *PublicCryptographicProof {
+	nodes := make([]*PublicCryptographicProofNode, proof.ChainSize)
+
+	for i, node := range proof.Path {
+		nodes[i] = &PublicCryptographicProofNode{
+			Key:      node.Key,
+			Data:     node.Data,
+			NodeHash: node.NodeHash,
+		}
+
+		if i < len(proof.Path)-1 {
+			nextNode := proof.Path[i+1]
+			cmp := bytes.Compare(nextNode.Key, node.Key)
+
+			if cmp > 0 {
+				// next node is right side
+				// add missing left child
+				if node.LeftChild != nil && node.LeftChild.getNodeSubtreeHash() != nil {
+					nodes[i].LeftChildSubtreeHash = node.LeftChild.getNodeSubtreeHash()
+				}
+			} else {
+				// next node is left
+				// add missing right child
+				if node.RightChild != nil && node.RightChild.getNodeSubtreeHash() != nil {
+					nodes[i].RightChildSubtreeHash = node.RightChild.getNodeSubtreeHash()
+				}
+			}
+		} else {
+			// leaf node, save all children
+			if node.LeftChild != nil && node.LeftChild.getNodeSubtreeHash() != nil {
+				nodes[i].LeftChildSubtreeHash = node.LeftChild.getNodeSubtreeHash()
+			}
+
+			if node.RightChild != nil && node.RightChild.getNodeSubtreeHash() != nil {
+				nodes[i].RightChildSubtreeHash = node.RightChild.getNodeSubtreeHash()
+			}
+		}
+	}
+
+	return &PublicCryptographicProof{
+		RootHash:  proof.RootHash,
+		TargetKey: proof.TargetKey,
+		Found:     proof.Found,
+		Path:      nodes,
+		Direction: proof.Direction,
+	}
+}
+
+func VerifyPublicProof(proof *PublicCryptographicProof) (bool, error) {
+
+	if len(proof.Path) == 0 || proof.RootHash == nil || !proof.Found {
+		return false, nil
+	}
+
+	if !verifyPublicPathConsistency(proof) {
+		return false, fmt.Errorf("invalid path")
+	}
+
+	if !proof.Found {
+		if !verifyPublicExclusionConditions(proof) {
+			return false, fmt.Errorf("invalid exclusion proof")
+		}
+	}
+
+	return verifyPublicHashChain(proof)
+}
+
+func verifyPublicPathConsistency(proof *PublicCryptographicProof) bool {
+	for i, node := range proof.Path {
+		cmp := bytes.Compare(proof.TargetKey, node.Key)
+
+		if cmp == 0 {
+			// found the target
+			return proof.Found
+		}
+
+		if i < len(proof.Path)-1 {
+			nextNode := proof.Path[i+1]
+
+			if cmp < 0 {
+				// next node should also be < current (going left)
+				if bytes.Compare(nextNode.Key, node.Key) >= 0 {
+					return false
+				}
+			} else {
+				// next node should also be > current (going right)
+				if bytes.Compare(nextNode.Key, node.Key) <= 0 {
+					return false
+				}
+			}
+		}
+	}
+
+	return !proof.Found
+}
+
+func verifyPublicExclusionConditions(proof *PublicCryptographicProof) bool {
+	if len(proof.Path) == 0 {
+		return true
+	}
+
+	lastNode := proof.Path[len(proof.Path)-1]
+	cmp := bytes.Compare(proof.TargetKey, lastNode.Key)
+
+	if cmp == 0 {
+		// proof claims it is not found but the node actually is in path
+		return false
+	}
+
+	// verify last node direction
+	if cmp < 0 && proof.Direction != "left" {
+		return false
+	}
+	if cmp > 0 && proof.Direction != "right" {
+		return false
+	}
+
+	return true
+}
+
+func verifyPublicHashChain(proof *PublicCryptographicProof) (bool, error) {
+	calculatedHashes := make(map[int]utils.Hash)
+
+	for i := len(proof.Path) - 1; i >= 0; i-- {
+		node := proof.Path[i]
+
+		expectedNodeHash := utils.ConcatDataAndGenerateHash(node.Key, node.Data)
+		if !bytes.Equal(node.NodeHash, expectedNodeHash) {
+			return false, fmt.Errorf("invalid node hash for key %x at %d: expected %x, got %x", node.Key[:8], i, expectedNodeHash, node.NodeHash)
+		}
+
+		encodedCBORList, err := utils.EncodeCBORList(node.NodeHash, node.LeftChildSubtreeHash, node.RightChildSubtreeHash)
+		if err != nil {
+			return false, fmt.Errorf("failed to encode node hash for key %x: %v", node.Key[:8], err)
+		}
+
+		calculatedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+		calculatedHashes[i] = calculatedSubtreeHash
+
+		if i == 0 {
+			if !bytes.Equal(proof.RootHash, calculatedSubtreeHash) {
+				return false, fmt.Errorf("calculated root hash does not match provided root hash")
+			}
+		}
+	}
+
+	return true, nil
+}
+
+// public
+// ------------
+// internal
+
+func (t *AVLHashTree) VerifyProof(proof *CryptographicProof) (bool, error) {
+	if len(proof.Path) == 0 {
+		return proof.RootHash == nil && !proof.Found, nil
+	}
+
+	if !bytes.Equal(proof.RootHash, t.Root.getNodeSubtreeHash()) {
+		return false, fmt.Errorf("given proof document containst invalid root hash")
+	}
+
+	if !t.verifyPathConsistency(proof) {
+		return false, fmt.Errorf("path is not consistent with target key")
+	}
+
+	return t.verifyHashChain(proof)
+}
+
+/* Check that the target key is present in the path of the proof
+ */
+func (t *AVLHashTree) verifyPathConsistency(proof *CryptographicProof) bool {
+	var lastCmp int
+
+	for _, node := range proof.Path {
+		lastCmp = bytes.Compare(proof.TargetKey, node.Key)
+
+		if lastCmp == 0 {
+			// found node
+			return true
+		}
+	}
+
+	// node not in path
+	// get last node, and check given direction
+	// lastCmp here will be the result of compare of last node in the path
+	if lastCmp < 0 && proof.Direction == "left" {
+		return true
+	}
+
+	if lastCmp > 0 && proof.Direction == "right" {
+		return true
+	}
+
+	return false
+}
+
+func (t *AVLHashTree) verifyHashChain(proof *CryptographicProof) (bool, error) {
+	// In proof's path the first node must be the root node with the root hash
+	// it is checked in the wrapper functions already, if the provided
+	// proof document has been spoofed/tampered with the root hash of the document
+	// will not equal to the root hash of the current avl tree in memory.
+	for i := len(proof.Path) - 1; i >= 0; i-- {
+		node := proof.Path[i]
+
+		expectedHash := utils.ConcatDataAndGenerateHash(node.Key, node.Data)
+		if !bytes.Equal(node.NodeHash, expectedHash) {
+			return false, fmt.Errorf("invalid NodeHash for key %x: expected %x, got %x", node.Key, expectedHash, node.NodeHash)
+		}
+
+		encodedCBORList, err := utils.EncodeCBORList(node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash())
+
+		if err != nil {
+			return false, fmt.Errorf("failed to encode hashes for verification: %v", err)
+		}
+
+		expectedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+
+		if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
+			return false, fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x", node.Key, expectedSubtreeHash, node.SubtreeHash)
+		}
+	}
+
+	return true, nil
+}
