@@ -245,14 +245,17 @@ func (t *AVLHashTree) insert(root *Node, key utils.CBORData, data utils.CBORData
 
 func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils.CBORData) (*Node, bool) {
 	if root == nil {
-		return &Node{
+		node := &Node{
 			Key:        key,
 			Data:       data,
 			Height:     1,
 			LeftChild:  nil,
 			RightChild: nil,
 			NodeHash:   utils.ConcatDataAndGenerateHash(key, data),
-		}, true
+		}
+		node.calculateSubtreeHash()
+		return node, true
+
 	}
 
 	var changed bool
@@ -368,6 +371,8 @@ func (t *AVLHashTree) deleteRecursive(root *Node, key utils.CBORData) (*Node, bo
 		// Find inorder successor
 		temp := getMinNode(root.RightChild)
 		root.Key = temp.Key
+		root.Data = temp.Data
+		root.NodeHash = temp.NodeHash
 		root.RightChild, changed = t.deleteRecursive(root.RightChild, temp.Key)
 	}
 
@@ -514,19 +519,16 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 
 	// The SubtreeHash should include the current node's hash plus child hashes
 	// First encode all three hashes to CBOR
-	if leftHash != nil && rightHash != nil {
-		// Subtree hash is present only if there are any child nodes
-		encodedCBORList, err := utils.EncodeCBORList(node.NodeHash, leftHash, rightHash)
-		if err != nil {
-			return fmt.Errorf("failed to encode node and child hashes for key %x: %v",
-				node.Key[:min(len(node.Key), 8)], err)
-		}
+	encodedCBORList, err := utils.EncodeCBORList(node.NodeHash, leftHash, rightHash)
+	if err != nil {
+		return fmt.Errorf("failed to encode node and child hashes for key %x: %v",
+			node.Key[:min(len(node.Key), 8)], err)
+	}
 
-		expectedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
-		if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
-			return fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x",
-				node.Key[:min(len(node.Key), 8)], expectedSubtreeHash, node.SubtreeHash)
-		}
+	expectedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+	if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
+		return fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x",
+			node.Key[:min(len(node.Key), 8)], expectedSubtreeHash, node.SubtreeHash)
 	}
 
 	return nil
@@ -741,19 +743,40 @@ func verifyPublicHashChain(proof *PublicCryptographicProof) (bool, error) {
 			return false, fmt.Errorf("invalid node hash for key %x at %d: expected %x, got %x", node.Key[:8], i, expectedNodeHash, node.NodeHash)
 		}
 
-		encodedCBORList, err := utils.EncodeCBORList(node.NodeHash, node.LeftChildSubtreeHash, node.RightChildSubtreeHash)
+		var leftHash, rightHash utils.Hash
+
+		if i < len(proof.Path)-1 {
+			nextNode := proof.Path[i+1]
+			cmp := bytes.Compare(nextNode.Key, node.Key)
+
+			if cmp < 0 {
+				// next node is left child so use its calculated hash
+				leftHash = calculatedHashes[i+1]
+				// right child not in path so use provided hash
+				rightHash = node.RightChildSubtreeHash
+			} else {
+				// next node is right child so use its calculated hash
+				rightHash = calculatedHashes[i+1]
+				// left child not in path so use provided hash
+				leftHash = node.LeftChildSubtreeHash
+			}
+		} else {
+			// last (leaf) node in path
+			leftHash = node.LeftChildSubtreeHash
+			rightHash = node.RightChildSubtreeHash
+		}
+
+		encodedCBORList, err := utils.EncodeCBORList(node.NodeHash, leftHash, rightHash)
 		if err != nil {
 			return false, fmt.Errorf("failed to encode node hash for key %x: %v", node.Key[:8], err)
 		}
 
 		calculatedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
 		calculatedHashes[i] = calculatedSubtreeHash
+	}
 
-		if i == 0 {
-			if !bytes.Equal(proof.RootHash, calculatedSubtreeHash) {
-				return false, fmt.Errorf("calculated root hash does not match provided root hash")
-			}
-		}
+	if !bytes.Equal(proof.RootHash, calculatedHashes[0]) {
+		return false, fmt.Errorf("calculated root hash does not match provided root hash")
 	}
 
 	return true, nil
