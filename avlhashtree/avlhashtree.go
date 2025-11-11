@@ -255,7 +255,6 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 		}
 		node.calculateSubtreeHash()
 		return node, true
-
 	}
 
 	var changed bool
