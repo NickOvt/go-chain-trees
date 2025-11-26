@@ -42,6 +42,14 @@ func (node *Node) getNodeSubtreeHash() utils.Hash {
 	return node.SubtreeHash
 }
 
+func (node *Node) getKey() utils.CBORData {
+	if node == nil {
+		return nil
+	}
+
+	return node.Key
+}
+
 // Computes and updates the SubtreeHash for the current node.
 // The subtree hash is calculated by combining the current node's hash with the
 // hashes of its left and right children.
@@ -282,22 +290,9 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 	root.Height = 1 + max(height(root.LeftChild), height(root.RightChild))
 
 	balanceFactor := getBalanceFactor(root)
-	var leftChildKey, rightChildKey utils.CBORData
-
-	if root.LeftChild == nil {
-		leftChildKey = nil
-	} else {
-		leftChildKey = root.LeftChild.Key
-	}
-
-	if root.RightChild == nil {
-		rightChildKey = nil
-	} else {
-		rightChildKey = root.RightChild.Key
-	}
-
-	leftChildCompare := bytes.Compare(key, leftChildKey)
-	rightChildCompare := bytes.Compare(key, rightChildKey)
+	
+	leftChildCompare := bytes.Compare(key, root.LeftChild.getKey())
+	rightChildCompare := bytes.Compare(key, root.RightChild.getKey())
 
 	if balanceFactor > 1 && leftChildCompare < 0 {
 		root = t.rotateRight(root)
