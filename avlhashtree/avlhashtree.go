@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+
 	"github.com/NickOvt/go-chain-trees/utils"
 )
 
@@ -281,21 +282,37 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 	root.Height = 1 + max(height(root.LeftChild), height(root.RightChild))
 
 	balanceFactor := getBalanceFactor(root)
+	var leftChildKey, rightChildKey utils.CBORData
 
-	if balanceFactor > 1 && bytes.Compare(key, root.LeftChild.Key) < 0 {
+	if root.LeftChild == nil {
+		leftChildKey = nil
+	} else {
+		leftChildKey = root.LeftChild.Key
+	}
+
+	if root.RightChild == nil {
+		rightChildKey = nil
+	} else {
+		rightChildKey = root.RightChild.Key
+	}
+
+	leftChildCompare := bytes.Compare(key, leftChildKey)
+	rightChildCompare := bytes.Compare(key, rightChildKey)
+
+	if balanceFactor > 1 && leftChildCompare < 0 {
 		root = t.rotateRight(root)
 	}
 
-	if balanceFactor < -1 && bytes.Compare(key, root.RightChild.Key) > 0 {
+	if balanceFactor < -1 && rightChildCompare > 0 {
 		root = t.rotateLeft(root)
 	}
 
-	if balanceFactor > 1 && bytes.Compare(key, root.LeftChild.Key) > 0 {
+	if balanceFactor > 1 && leftChildCompare > 0 {
 		root.LeftChild = t.rotateLeft(root.LeftChild)
 		root = t.rotateRight(root)
 	}
 
-	if balanceFactor < -1 && bytes.Compare(key, root.RightChild.Key) < 0 {
+	if balanceFactor < -1 && rightChildCompare < 0 {
 		root.RightChild = t.rotateRight(root.RightChild)
 		root = t.rotateLeft(root)
 	}
@@ -659,7 +676,7 @@ func (proof *CryptographicProof) ToPublicProof() *PublicCryptographicProof {
 	}
 }
 
-func VerifyPublicProof(proof *PublicCryptographicProof) (bool, error) {
+func (t *AVLHashTree) VerifyPublicProof(proof *PublicCryptographicProof) (bool, error) {
 
 	if len(proof.Path) == 0 || proof.RootHash == nil || !proof.Found {
 		return false, nil
