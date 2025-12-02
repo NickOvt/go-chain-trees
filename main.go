@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/NickOvt/go-chain-trees/api"
-	"github.com/gin-gonic/gin"
 	"log"
 	"strconv"
+
+	"github.com/NickOvt/go-chain-trees/api"
+	"github.com/gin-gonic/gin"
 
 	"github.com/NickOvt/go-chain-trees/avlhashtree"
 	"github.com/NickOvt/go-chain-trees/utils"
@@ -15,13 +16,13 @@ func main() {
 	log.Println("Starting application...")
 
 	// Create a new AVL tree
-	avl := avlhashtree.NewAVLHashTree()
+	avl := avlhashtree.NewAVLHashTree(utils.SHA256)
 
 	// Insert keys
 	keys := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 	for _, key := range keys {
-		err := avl.Insert(utils.GenerateHash([]byte(strconv.Itoa(key))), key)
+		err := avl.Insert(utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(key))), key)
 		if err != nil {
 			return
 		}
@@ -31,9 +32,9 @@ func main() {
 	// Print the final tree
 	avl.PrintTree()
 
-	search, _ := utils.EncodeCBOR(utils.GenerateHash([]byte(strconv.Itoa(4))))
+	search, _ := utils.EncodeCBOR(utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(4))))
 
-	fmt.Println(fmt.Sprintf("%x|%x", search, utils.GenerateHash([]byte(strconv.Itoa(4)))))
+	fmt.Println(fmt.Sprintf("%x|%x", search, utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(4)))))
 
 	aaa, _ := utils.DecodeCBOR[utils.Hash](search)
 
@@ -45,7 +46,7 @@ func main() {
 		fmt.Printf("Tree validation failed: %v\n", err)
 	}
 
-	search2, _ := utils.EncodeCBOR(utils.GenerateHash([]byte(strconv.Itoa(13))))
+	search2, _ := utils.EncodeCBOR(utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(13))))
 	inclusionProof, _ := avl.GenerateInclusionExclusionProof(search2)
 
 	proofCbor, _ := utils.EncodeCBOR(inclusionProof.ToPublicProof())
@@ -60,7 +61,7 @@ func main() {
 
 	r := gin.Default()
 
-	avlHashTreeService := api.NewAVLHashTreeService(avlhashtree.NewAVLHashTree())
+	avlHashTreeService := api.NewAVLHashTreeService(avlhashtree.NewAVLHashTree(utils.SHA256))
 	api.SetupRoutes(r)
 	api.SetupRoutesWithService(r, avlHashTreeService) // Add Service routes
 

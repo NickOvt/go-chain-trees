@@ -3,6 +3,7 @@ package test
 import (
 	"crypto/rand"
 	"fmt"
+	"math"
 	randMath "math/rand"
 	"os"
 	"runtime"
@@ -14,15 +15,23 @@ import (
 )
 
 type BenchmarkResult struct {
-	ElementCount      int
+	ElementCount int
+
+	ProofGenTime    time.Duration
+	ProofSize       int
+	ProofVerifyTime time.Duration
+
 	InsertionTime     time.Duration
 	AvgPerBlock       time.Duration
-	ProofGenTime      time.Duration
-	ProofSize         int
-	ProofVerifyTime   time.Duration
 	MemoryAllocatedMB float64
 	TotalAllocatedMB  float64
 	HeapObjects       uint64
+
+	DeletionTime             time.Duration
+	AvgDeletionPerBlock      time.Duration
+	DeletesMemoryAllocatedMB float64
+	DeletesTotalAllocatedMB  float64
+	DeletesHeapObjects       uint64
 }
 
 type BenchmarkOptions struct {
@@ -33,8 +42,9 @@ type BenchmarkOptions struct {
 	DataSizeBytes         int
 	MeasureInserts        bool
 	MeasureDeletes        bool
-	ExecuteDeletes        bool
 	ElementCount          int
+	DeleteCount           int
+	HashAlgo              utils.HashAlgo
 }
 
 type ProofResult struct {
@@ -44,6 +54,13 @@ type ProofResult struct {
 }
 
 var allResults []BenchmarkResult
+
+type InsertDeleteMetrics struct {
+	Elapsed      time.Duration
+	AllocatedMB  float64
+	TotalAllocMB float64
+	HeapObjects  uint64
+}
 
 func TestMain(m *testing.M) {
 	// Run all tests
@@ -62,62 +79,62 @@ func TestMain(m *testing.M) {
 // ------------------------------
 
 func TestAVL_10k(t *testing.T) {
-	result := runBenchmark(t, 10_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8, MeasureDeletes: true, DeleteCount: 1000})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_50k(t *testing.T) {
-	result := runBenchmark(t, 50_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_100k(t *testing.T) {
-	result := runBenchmark(t, 100_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 100_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_200k(t *testing.T) {
-	result := runBenchmark(t, 200_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 200_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_300k(t *testing.T) {
-	result := runBenchmark(t, 300_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 300_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_500k(t *testing.T) {
-	result := runBenchmark(t, 500_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 500_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_700k(t *testing.T) {
-	result := runBenchmark(t, 700_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 700_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_900k(t *testing.T) {
-	result := runBenchmark(t, 900_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 900_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_1M(t *testing.T) {
-	result := runBenchmark(t, 1_000_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 1_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_2M(t *testing.T) {
-	result := runBenchmark(t, 2_000_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 2_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_5M(t *testing.T) {
-	result := runBenchmark(t, 5_000_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 5_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_10M(t *testing.T) {
-	result := runBenchmark(t, 10_000_000)
+	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 10_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
@@ -178,93 +195,132 @@ func saveResultsToCSV() {
 	fmt.Printf("\nResults saved to: %s\n", filename)
 }
 
-func runBenchmark(t *testing.T, count int) BenchmarkResult {
+func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	t.Logf("\n========================================")
-	t.Logf("Starting test with %d elements", count)
+	t.Logf("Starting test with %d elements", options.ElementCount)
 	t.Logf("========================================")
 
-	avl := avlhashtree.NewAVLHashTree()
-	blockSize := 1024
+	if options.HashAlgo == "" {
+		options.HashAlgo = utils.SHA256
+	}
 
-	sampleSize := count / 100
-	if sampleSize == 0 {
+	avl := avlhashtree.NewAVLHashTree(options.HashAlgo)
+	
+	blockSize := options.BlockSizeBytes
+	if blockSize == 0 {
+		blockSize = 1024
+	}
+	dataSize := options.DataSizeBytes
+	if dataSize == 0 {
+		dataSize = 8
+	}
+
+	sampleSize := int(math.Round(float64(float32(options.ElementCount) * options.SampleSize)))
+	if sampleSize < 1 {
 		sampleSize = 1
 	}
 	sampleIndices := map[int]bool{}
 	for j := 0; j < sampleSize; j++ {
-		sampleIndices[randMath.Intn(count)] = true
+		sampleIndices[randMath.Intn(options.ElementCount)] = true
 	}
-
-	// Memory stats before
-	var m1 runtime.MemStats
-	runtime.ReadMemStats(&m1)
-
-	// Start timing
-	start := time.Now()
 
 	proofGenerationKeySample := make([]utils.Hash, 0, sampleSize)
 
-	for i := 0; i < count; i++ {
-		block := make([]byte, blockSize)
-		rand.Read(block)
-		data := make([]byte, 8)
-		rand.Read(data)
+	results := map[string]any{}
 
-		hashOfBlock := utils.GenerateHash(block)
+	deleteIndices := map[int]bool{}
+	deletesKeySample := make([]utils.Hash, 0, options.DeleteCount)
 
-		if _, ok := sampleIndices[i]; ok {
-			proofGenerationKeySample = append(proofGenerationKeySample, hashOfBlock)
-		}
-
-		err := avl.Insert(hashOfBlock, data)
-		if err != nil {
-			t.Fatal(err)
+	if options.MeasureDeletes && options.DeleteCount > 0 {
+		for j := 0; j < options.DeleteCount; j++ {
+			deleteIndices[randMath.Intn(options.DeleteCount)] = true
 		}
 	}
 
-	// End timing
-	elapsed := time.Since(start)
+	if options.MeasureInserts {
+		// Memory stats before
+		var m1 runtime.MemStats
+		runtime.ReadMemStats(&m1)
 
-	// Memory stats after
-	var m2 runtime.MemStats
-	runtime.ReadMemStats(&m2)
+		// Start timing
+		startInserts := time.Now()
+
+		for i := 0; i < options.ElementCount; i++ {
+			block := make([]byte, blockSize)
+			rand.Read(block)
+			data := make([]byte, dataSize)
+			rand.Read(data)
+
+			hashOfBlock := utils.GenerateHashSha256(block)
+
+			if _, ok := sampleIndices[i]; ok {
+				proofGenerationKeySample = append(proofGenerationKeySample, hashOfBlock)
+			}
+
+			if _, ok := deleteIndices[i]; ok {
+				deletesKeySample = append(deletesKeySample, hashOfBlock)
+			}
+
+			err := avl.Insert(hashOfBlock, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// End timing
+		elapsedInserts := time.Since(startInserts)
+
+		// Memory stats after
+		var m2 runtime.MemStats
+		runtime.ReadMemStats(&m2)
+
+		// Calculate memory used
+		allocatedMBInserts := float64(m2.Alloc-m1.Alloc) / 1024 / 1024
+		totalAllocMBInserts := float64(m2.TotalAlloc-m1.TotalAlloc) / 1024 / 1024
+		heapObjects := m2.HeapObjects
+
+		results["inserts"] = InsertDeleteMetrics{
+			Elapsed:      elapsedInserts,
+			AllocatedMB:  allocatedMBInserts,
+			TotalAllocMB: totalAllocMBInserts,
+			HeapObjects:  heapObjects,
+		}
+	}
 
 	proofResults := map[int]ProofResult{}
 
-	for idx, proofKey := range proofGenerationKeySample {
-		startProof := time.Now()
-		randKeyCBOR, _ := utils.EncodeCBOR(proofKey)
+	if options.IncludeInclusionProof {
+		for idx, proofKey := range proofGenerationKeySample {
+			startProof := time.Now()
+			randKeyCBOR, _ := utils.EncodeCBOR(proofKey)
 
-		proof, _ := avl.GenerateInclusionExclusionProof(randKeyCBOR)
-		elapsedProof := time.Since(startProof)
+			proof, _ := avl.GenerateInclusionExclusionProof(randKeyCBOR)
+			elapsedProof := time.Since(startProof)
 
-		publicProof := proof.ToPublicProof()
-		proofCbor, _ := utils.EncodeCBOR(publicProof)
+			publicProof := proof.ToPublicProof()
+			proofCbor, _ := utils.EncodeCBOR(publicProof)
 
-		startVerif := time.Now()
+			startVerif := time.Now()
 
-		res, err := avl.VerifyPublicProof(publicProof)
+			res, err := avl.VerifyPublicProof(publicProof)
 
-		if err != nil {
-			t.Fatal(err)
-		}
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		if res != true {
-			t.Errorf("Verification failed!")
-		}
+			if res != true {
+				t.Errorf("Verification failed!")
+			}
 
-		elapsedVerif := time.Since(startVerif)
+			elapsedVerif := time.Since(startVerif)
 
-		proofResults[idx] = ProofResult{
-			proofSizeBytes:   len(proofCbor),
-			proofTime:        elapsedProof,
-			verificationTime: elapsedVerif,
+			proofResults[idx] = ProofResult{
+				proofSizeBytes:   len(proofCbor),
+				proofTime:        elapsedProof,
+				verificationTime: elapsedVerif,
+			}
 		}
 	}
-
-	// Calculate memory used
-	allocatedMB := float64(m2.Alloc-m1.Alloc) / 1024 / 1024
-	totalAllocMB := float64(m2.TotalAlloc-m1.TotalAlloc) / 1024 / 1024
 
 	// Proofs
 	var totalProofTime time.Duration
@@ -281,30 +337,103 @@ func runBenchmark(t *testing.T, count int) BenchmarkResult {
 	avgProofSize := totalProofSize / len(proofResults)
 	avgVerifyTime := totalVerifyTime / time.Duration(len(proofResults))
 
+	if options.MeasureDeletes && options.DeleteCount > 0 {
+		// Memory stats before
+		var m1 runtime.MemStats
+		runtime.ReadMemStats(&m1)
+
+		// Start timing
+		startDeletes := time.Now()
+
+		for _, deleteKey := range deletesKeySample {
+			err := avl.Delete(deleteKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// End timing
+		elapsedDeletes := time.Since(startDeletes)
+
+		// Memory stats after
+		var m2 runtime.MemStats
+		runtime.ReadMemStats(&m2)
+
+		// Calculate memory used
+		allocatedMBDeletes := float64(m2.Alloc-m1.Alloc) / 1024 / 1024
+		totalAllocMBDeletes := float64(m2.TotalAlloc-m1.TotalAlloc) / 1024 / 1024
+		heapObjects := m2.HeapObjects
+
+		results["deletes"] = InsertDeleteMetrics{
+			Elapsed:      elapsedDeletes,
+			AllocatedMB:  allocatedMBDeletes,
+			TotalAllocMB: totalAllocMBDeletes,
+			HeapObjects:  heapObjects,
+		}
+	}
+
 	// Log individual test results
-	t.Logf("Inserted %d blocks", count)
-	t.Logf("Time taken: %v", elapsed)
-	t.Logf("Overall avg per block: %v", elapsed/time.Duration(count))
+	t.Logf("Inserted %d blocks", options.ElementCount)
+
+	if val, ok := results["inserts"]; ok {
+		if inserts, ok := val.(InsertDeleteMetrics); ok {
+			t.Logf("Time taken: %v", inserts.Elapsed)
+			t.Logf("Overall avg per block: %v", inserts.Elapsed/time.Duration(options.ElementCount))
+		}
+	}
+
 	t.Logf("Average time for Proof generation: %v", avgProofTime)
 	t.Logf("Average proof size in bytes: %d", avgProofSize)
 	t.Logf("Average time for Proof verification: %v", avgVerifyTime)
-	t.Logf("Memory allocated: %.2f MB", allocatedMB)
-	t.Logf("Total allocated (including GC'd): %.2f MB", totalAllocMB)
-	t.Logf("Heap objects: %d", m2.HeapObjects)
+
+	if val, ok := results["inserts"]; ok {
+		if inserts, ok := val.(InsertDeleteMetrics); ok {
+			t.Logf("Memory allocated: %.2f MB", inserts.AllocatedMB)
+			t.Logf("Total allocated (including GC'd): %.2f MB", inserts.TotalAllocMB)
+			t.Logf("Heap objects: %d", inserts.HeapObjects)
+		}
+	}
+
+	if val, ok := results["deletes"]; ok {
+		if deletes, ok := val.(InsertDeleteMetrics); ok {
+			t.Logf("Time taken [Deletes]: %v", deletes.Elapsed)
+			t.Logf("Overall avg per block [Deletes]: %v", deletes.Elapsed/time.Duration(options.DeleteCount))
+			t.Logf("Memory allocated [Deletes]: %.2f MB", deletes.AllocatedMB)
+			t.Logf("Total allocated (including GC'd) [Deletes]: %.2f MB", deletes.TotalAllocMB)
+			t.Logf("Heap objects [Deletes]: %d", deletes.HeapObjects)
+		}
+	}
 
 	// Force GC between tests
 	runtime.GC()
 	time.Sleep(100 * time.Millisecond)
 
-	return BenchmarkResult{
-		ElementCount:      count,
-		InsertionTime:     elapsed,
-		AvgPerBlock:       elapsed / time.Duration(count),
-		ProofGenTime:      avgProofTime,
-		ProofSize:         avgProofSize,
-		ProofVerifyTime:   avgVerifyTime,
-		MemoryAllocatedMB: allocatedMB,
-		TotalAllocatedMB:  totalAllocMB,
-		HeapObjects:       m2.HeapObjects,
+	result := BenchmarkResult{
+		ElementCount:    options.ElementCount,
+		ProofGenTime:    avgProofTime,
+		ProofSize:       avgProofSize,
+		ProofVerifyTime: avgVerifyTime,
 	}
+
+	if val, ok := results["inserts"]; ok {
+		if inserts, ok := val.(InsertDeleteMetrics); ok {
+			result.InsertionTime = inserts.Elapsed
+			result.AvgPerBlock = inserts.Elapsed / time.Duration(options.ElementCount)
+			result.MemoryAllocatedMB = inserts.AllocatedMB
+			result.TotalAllocatedMB = inserts.TotalAllocMB
+			result.HeapObjects = inserts.HeapObjects
+		}
+	}
+
+	if val, ok := results["deletes"]; ok {
+		if deletes, ok := val.(InsertDeleteMetrics); ok {
+			result.DeletionTime = deletes.Elapsed
+			result.AvgDeletionPerBlock = deletes.Elapsed / time.Duration(options.DeleteCount)
+			result.DeletesMemoryAllocatedMB = deletes.AllocatedMB
+			result.DeletesTotalAllocatedMB = deletes.TotalAllocMB
+			result.DeletesHeapObjects = deletes.HeapObjects
+		}
+	}
+
+	return result
 }
