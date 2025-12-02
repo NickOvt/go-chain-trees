@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"crypto/sha256"
 	"crypto/sha3"
+	"crypto/sha512"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -54,27 +56,80 @@ func DecodeCBOR[T any](cborData CBORData) (T, error) {
 	return output, nil
 }
 
-// GenerateHash generates a SHA3-384 hash of the given byte data.
+// GenerateHashSha384 generates an SHA-384 hash of the given byte data.
 //
 // Parameters:
 //   - data: The byte slice to hash
 //
 // Returns:
-//   - Hash: The SHA3-384 hash as a byte slice
-func GenerateHash(data []byte) Hash {
+//   - Hash: The SHA-384 hash as a byte slice
+func GenerateHashSha384(data []byte) Hash {
 	hash := sha3.Sum384(data)
 	return hash[:]
 }
 
-// ConcatDataAndGenerateHash concatenates multiple CBOR byte arrays
-// and calculates their combined SHA3-384 hash.
+// GenerateHashSha256 generates a SHA2-256 hash of the given byte data.
 //
 // Parameters:
+//   - data: The byte slice to hash
+//
+// Returns:
+//   - Hash: The SHA2-256 hash as a byte slice
+func GenerateHashSha256(data []byte) Hash {
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
+
+// GenerateHashSha512 generates an SHA-512 hash of the given byte data.
+//
+// Parameters:
+//   - data: The byte slice to hash
+//
+// Returns:
+//   - Hash: The SHA-512 hash as a byte slice
+func GenerateHashSha512(data []byte) Hash {
+	hash := sha512.Sum512(data)
+	return hash[:]
+}
+
+type HashAlgo string
+type GenerateHashFunc func(data []byte) Hash
+
+const (
+	SHA256 HashAlgo = "sha256"
+	SHA384 HashAlgo = "sha384"
+	SHA512 HashAlgo = "sha512"
+)
+
+// GenerateHash generates a hash of the given byte data using specified HashAlgo.
+//
+// Parameters:
+//   - hashAlgo: The HashAlgo used (SHA256, SHA384, SHA512)
+//   - data: The byte slice to hash
+//
+// Returns:
+//   - Hash: The HashAlgo hash of the data as byte slice
+func GenerateHash(hashAlgo HashAlgo, data []byte) Hash {
+	hashAlgoToHashFuncMap := map[HashAlgo]GenerateHashFunc{
+		"":     GenerateHashSha256,
+		SHA256: GenerateHashSha256,
+		SHA384: GenerateHashSha384,
+		SHA512: GenerateHashSha512,
+	}
+
+	return hashAlgoToHashFuncMap[hashAlgo](data)
+}
+
+// ConcatDataAndGenerateHash concatenates multiple CBOR byte arrays
+// and calculates their combined hash.
+//
+// Parameters:
+//   - hashAlgo: The HashAlgo used (SHA256, SHA384, SHA512)
 //   - data: Variable number of CBORData slices to concatenate and hash
 //
 // Returns:
-//   - Hash: The SHA3-384 hash of the concatenated data
-func ConcatDataAndGenerateHash(data ...CBORData) Hash {
+//   - Hash: The hash of the concatenated data
+func ConcatDataAndGenerateHash(hashAlgo HashAlgo, data ...CBORData) Hash {
 	// Calculate total length needed to preallocate memory
 	totalLen := 0
 	for _, slice := range data {
@@ -87,7 +142,7 @@ func ConcatDataAndGenerateHash(data ...CBORData) Hash {
 		combined = append(combined, slice...)
 	}
 
-	return GenerateHash(combined)
+	return GenerateHash(hashAlgo, combined)
 }
 
 // EncodeCBORList encodes multiple values to CBOR format and returns them

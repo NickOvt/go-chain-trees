@@ -57,29 +57,30 @@ func (node *Node) getKey() utils.CBORData {
 // Returns:
 //   - utils.Hash: The calculated subtree hash
 //   - error: An error if CBOR encoding fails, nil otherwise
-func (node *Node) calculateSubtreeHash() (utils.Hash, error) {
+func (node *Node) calculateSubtreeHash(hashAlgo utils.HashAlgo) (utils.Hash, error) {
 	encodedCBORList, err := utils.EncodeCBORList(node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash())
 
 	if err != nil {
 		return nil, err
 	}
 
-	node.SubtreeHash = utils.ConcatDataAndGenerateHash(encodedCBORList...)
+	node.SubtreeHash = utils.ConcatDataAndGenerateHash(hashAlgo, encodedCBORList...)
 
 	return node.SubtreeHash, nil
 }
 
 // AVLHashTree Main AVL Tree struct
 type AVLHashTree struct {
-	Root *Node
+	Root     *Node
+	HashAlgo utils.HashAlgo
 }
 
 // NewAVLHashTree creates a new, empty AVL hash tree
 //
 // Returns:
 //   - *AVLHashTree: Empty AVLHashTree struct
-func NewAVLHashTree() *AVLHashTree {
-	return &AVLHashTree{Root: nil}
+func NewAVLHashTree(hashAlgo utils.HashAlgo) *AVLHashTree {
+	return &AVLHashTree{Root: nil, HashAlgo: hashAlgo}
 }
 
 // Returns the height of the given node in the tree.
@@ -179,8 +180,8 @@ func (t *AVLHashTree) rotateLeft(node *Node) *Node {
 	node.Height = 1 + max(height(node.LeftChild), height(node.RightChild))
 	B.Height = 1 + max(height(B.LeftChild), height(B.RightChild))
 
-	node.calculateSubtreeHash()
-	B.calculateSubtreeHash()
+	node.calculateSubtreeHash(t.HashAlgo)
+	B.calculateSubtreeHash(t.HashAlgo)
 
 	return B
 }
@@ -197,8 +198,8 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 	node.Height = 1 + max(height(node.LeftChild), height(node.RightChild))
 	A.Height = 1 + max(height(A.LeftChild), height(A.RightChild))
 
-	node.calculateSubtreeHash() // Old root first
-	A.calculateSubtreeHash()
+	node.calculateSubtreeHash(t.HashAlgo) // Old root first
+	A.calculateSubtreeHash(t.HashAlgo)
 
 	return A
 }
@@ -260,9 +261,9 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 			Height:     1,
 			LeftChild:  nil,
 			RightChild: nil,
-			NodeHash:   utils.ConcatDataAndGenerateHash(key, data),
+			NodeHash:   utils.ConcatDataAndGenerateHash(t.HashAlgo, key, data),
 		}
-		node.calculateSubtreeHash()
+		node.calculateSubtreeHash(t.HashAlgo)
 		return node, true
 	}
 
@@ -275,7 +276,7 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 		root.RightChild, changed = t.insertRecursive(root.RightChild, key, data)
 	} else {
 		// duplicate
-		possibleNewNodeHash := utils.ConcatDataAndGenerateHash(key, data)
+		possibleNewNodeHash := utils.ConcatDataAndGenerateHash(t.HashAlgo, key, data)
 		if !bytes.Equal(root.getNodeHash(), possibleNewNodeHash) {
 			root.Data = data
 			root.NodeHash = possibleNewNodeHash
@@ -290,7 +291,7 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 	root.Height = 1 + max(height(root.LeftChild), height(root.RightChild))
 
 	balanceFactor := getBalanceFactor(root)
-	
+
 	leftChildCompare := bytes.Compare(key, root.LeftChild.getKey())
 	rightChildCompare := bytes.Compare(key, root.RightChild.getKey())
 
@@ -313,7 +314,7 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.CBORData, data utils
 	}
 
 	// Recalculate Subtree Hash for root here, after insert and rotations
-	_, err := root.calculateSubtreeHash()
+	_, err := root.calculateSubtreeHash(t.HashAlgo)
 	if err != nil {
 		// handle error
 		fmt.Println("Calculate Subtree Hash Failed")
@@ -413,7 +414,7 @@ func (t *AVLHashTree) deleteRecursive(root *Node, key utils.CBORData) (*Node, bo
 		root = t.rotateLeft(root)
 	}
 
-	_, err := root.calculateSubtreeHash()
+	_, err := root.calculateSubtreeHash(t.HashAlgo)
 	if err != nil {
 		// handle error
 		fmt.Println("Calculate Subtree Hash Failed")
@@ -510,7 +511,7 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 	}
 
 	// 1. Validate NodeHash (Key + Data)
-	expectedNodeHash := utils.ConcatDataAndGenerateHash(node.Key, node.Data)
+	expectedNodeHash := utils.ConcatDataAndGenerateHash(t.HashAlgo, node.Key, node.Data)
 	if !bytes.Equal(node.NodeHash, expectedNodeHash) {
 		return fmt.Errorf("invalid NodeHash for key %x: expected %x, got %x",
 			node.Key[:min(len(node.Key), 8)], expectedNodeHash, node.NodeHash)
@@ -536,7 +537,7 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 			node.Key[:min(len(node.Key), 8)], err)
 	}
 
-	expectedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+	expectedSubtreeHash := utils.ConcatDataAndGenerateHash(t.HashAlgo, encodedCBORList...)
 	if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
 		return fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x",
 			node.Key[:min(len(node.Key), 8)], expectedSubtreeHash, node.SubtreeHash)
@@ -552,6 +553,7 @@ type CryptographicProof struct {
 	Path      []*Node        // Hash Chain Path
 	Direction string         // If inclusion not proved specify what direction node would be required
 	ChainSize int            // Size hash chain path
+	HashAlgo  utils.HashAlgo
 }
 
 // TODO: Return Proof as CBOR bytes
@@ -564,6 +566,7 @@ func (t *AVLHashTree) GenerateInclusionExclusionProof(key utils.CBORData) (*Cryp
 			Found:     false,
 			Path:      []*Node{},
 			ChainSize: 0,
+			HashAlgo:  t.HashAlgo,
 		}, nil
 	}
 
@@ -573,6 +576,7 @@ func (t *AVLHashTree) GenerateInclusionExclusionProof(key utils.CBORData) (*Cryp
 		Found:     false,
 		Path:      []*Node{},
 		ChainSize: 0,
+		HashAlgo:  t.HashAlgo,
 	}
 
 	t.generateInclusionExclusionProofRecursive(t.Root, key, "root", proof)
@@ -613,6 +617,7 @@ type PublicCryptographicProof struct {
 	Found     bool                            `cbor:"3,keyasint"`
 	Path      []*PublicCryptographicProofNode `cbor:"4,keyasint"`
 	Direction string                          `cbor:"5,keyasint, omitempty"`
+	HashAlgo  utils.HashAlgo                  `cbor:"6,keyasint"`
 }
 
 type PublicCryptographicProofNode struct {
@@ -668,6 +673,7 @@ func (proof *CryptographicProof) ToPublicProof() *PublicCryptographicProof {
 		Found:     proof.Found,
 		Path:      nodes,
 		Direction: proof.Direction,
+		HashAlgo:  proof.HashAlgo,
 	}
 }
 
@@ -749,7 +755,7 @@ func verifyPublicHashChain(proof *PublicCryptographicProof) (bool, error) {
 	for i := len(proof.Path) - 1; i >= 0; i-- {
 		node := proof.Path[i]
 
-		expectedNodeHash := utils.ConcatDataAndGenerateHash(node.Key, node.Data)
+		expectedNodeHash := utils.ConcatDataAndGenerateHash(proof.HashAlgo, node.Key, node.Data)
 		if !bytes.Equal(node.NodeHash, expectedNodeHash) {
 			return false, fmt.Errorf("invalid node hash for key %x at %d: expected %x, got %x", node.Key[:8], i, expectedNodeHash, node.NodeHash)
 		}
@@ -782,7 +788,7 @@ func verifyPublicHashChain(proof *PublicCryptographicProof) (bool, error) {
 			return false, fmt.Errorf("failed to encode node hash for key %x: %v", node.Key[:8], err)
 		}
 
-		calculatedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+		calculatedSubtreeHash := utils.ConcatDataAndGenerateHash(proof.HashAlgo, encodedCBORList...)
 		calculatedHashes[i] = calculatedSubtreeHash
 	}
 
@@ -849,7 +855,7 @@ func (t *AVLHashTree) verifyHashChain(proof *CryptographicProof) (bool, error) {
 	for i := len(proof.Path) - 1; i >= 0; i-- {
 		node := proof.Path[i]
 
-		expectedHash := utils.ConcatDataAndGenerateHash(node.Key, node.Data)
+		expectedHash := utils.ConcatDataAndGenerateHash(t.HashAlgo, node.Key, node.Data)
 		if !bytes.Equal(node.NodeHash, expectedHash) {
 			return false, fmt.Errorf("invalid NodeHash for key %x: expected %x, got %x", node.Key, expectedHash, node.NodeHash)
 		}
@@ -860,7 +866,7 @@ func (t *AVLHashTree) verifyHashChain(proof *CryptographicProof) (bool, error) {
 			return false, fmt.Errorf("failed to encode hashes for verification: %v", err)
 		}
 
-		expectedSubtreeHash := utils.ConcatDataAndGenerateHash(encodedCBORList...)
+		expectedSubtreeHash := utils.ConcatDataAndGenerateHash(t.HashAlgo, encodedCBORList...)
 
 		if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
 			return false, fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x", node.Key, expectedSubtreeHash, node.SubtreeHash)
