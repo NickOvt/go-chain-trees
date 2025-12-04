@@ -111,13 +111,17 @@ const (
 //   - Hash: The HashAlgo hash of the data as byte slice
 func GenerateHash(hashAlgo HashAlgo, data []byte) Hash {
 	hashAlgoToHashFuncMap := map[HashAlgo]GenerateHashFunc{
-		"":     GenerateHashSha256,
 		SHA256: GenerateHashSha256,
 		SHA384: GenerateHashSha384,
 		SHA512: GenerateHashSha512,
 	}
 
-	return hashAlgoToHashFuncMap[hashAlgo](data)
+	if hashFunc, ok := hashAlgoToHashFuncMap[hashAlgo]; ok {
+		return hashFunc(data)
+	}
+
+	// default to SHA256 if not found
+	return GenerateHashSha256(data)
 }
 
 // ConcatDataAndGenerateHash concatenates multiple CBOR byte arrays

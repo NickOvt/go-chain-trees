@@ -7,6 +7,7 @@ import (
 	randMath "math/rand"
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,42 +16,62 @@ import (
 )
 
 type BenchmarkResult struct {
-	ElementCount int
+	//// Inclusion Proofs
+	InclusionProofGenTime    time.Duration
+	InclusionProofSize       int
+	InclusionProofVerifyTime time.Duration
+	////
 
-	ProofGenTime    time.Duration
-	ProofSize       int
-	ProofVerifyTime time.Duration
+	//// Exclusion Proofs
+	ExclusionProofGenTime    time.Duration
+	ExclusionProofSize       int
+	ExclusionProofVerifyTime time.Duration
+	////
 
-	InsertionTime     time.Duration
-	AvgPerBlock       time.Duration
-	MemoryAllocatedMB float64
-	TotalAllocatedMB  float64
-	HeapObjects       uint64
+	//// Inserts
+	InsertElementCount int
+	InsertionTime      time.Duration
+	AvgPerBlock        time.Duration
+	MemoryAllocatedMB  float64
+	TotalAllocatedMB   float64
+	HeapObjects        uint64
+	////
 
+	//// Deletes
+	DeleteElementCount       int
 	DeletionTime             time.Duration
 	AvgDeletionPerBlock      time.Duration
 	DeletesMemoryAllocatedMB float64
 	DeletesTotalAllocatedMB  float64
 	DeletesHeapObjects       uint64
+	////
 }
 
 type BenchmarkOptions struct {
-	IncludeInclusionProof bool
-	IncludeExclusionProof bool
-	SampleSize            float32 // percentage
-	BlockSizeBytes        int
-	DataSizeBytes         int
-	MeasureInserts        bool
-	MeasureDeletes        bool
-	ElementCount          int
-	DeleteCount           int
-	HashAlgo              utils.HashAlgo
+	IncludeInclusionProof    bool
+	IncludeExclusionProof    bool
+	InclusionProofSequential bool
+	SampleSize               float32 // percentage
+	BlockSizeBytes           int
+	DataSizeBytes            int
+	MeasureInserts           bool
+	MeasureDeletes           bool
+	ElementCount             int
+	DeleteCount              int
+	HashAlgo                 utils.HashAlgo
+	DeleteSequential         bool
 }
 
 type ProofResult struct {
 	proofSizeBytes   int
 	proofTime        time.Duration
 	verificationTime time.Duration
+}
+
+type InclusionExclusionProofResult struct {
+	avgProofTime  time.Duration
+	avgProofSize  int
+	avgVerifyTime time.Duration
 }
 
 var allResults []BenchmarkResult
@@ -73,6 +94,24 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(exitCode)
+}
+
+func calculateProofBenchmark(proofResults map[int]ProofResult) (time.Duration, int, time.Duration) {
+	var totalProofTime time.Duration
+	var totalProofSize int
+	var totalVerifyTime time.Duration
+
+	for _, pr := range proofResults {
+		totalProofTime += pr.proofTime
+		totalProofSize += pr.proofSizeBytes
+		totalVerifyTime += pr.verificationTime
+	}
+
+	avgProofTime := totalProofTime / time.Duration(len(proofResults))
+	avgProofSize := totalProofSize / len(proofResults)
+	avgVerifyTime := totalVerifyTime / time.Duration(len(proofResults))
+
+	return avgProofTime, avgProofSize, avgVerifyTime
 }
 
 // 1.
@@ -145,22 +184,66 @@ func printCombinedResults() {
 	fmt.Println("BENCHMARK SUITE RESULTS")
 	fmt.Println("========================================")
 
-	fmt.Printf("%-12s %-15s %-15s %-15s %-12s %-15s %-15s %-15s %-12s\n",
-		"Elements", "Insert Time", "Avg/Block", "Proof Gen", "Proof Size", "Proof Verify", "Mem Alloc MB", "Total Alloc MB", "Heap Objs")
-	fmt.Printf("%-12s %-15s %-15s %-15s %-12s %-15s %-15s %-15s %-12s\n",
-		"------------", "---------------", "---------------", "---------------", "------------", "---------------", "---------------", "---------------", "------------")
+	fmt.Printf("%-25s %-20s %-20s %-25s %-25s %-22s %-22s %-23s %-25s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
+		"Elements [Inserts]",
+		"Insert Time [Inserts]",
+		"Avg/Block [Inserts]",
+		"Mem Alloc MB [Inserts]",
+		"Total Alloc MB [Inserts]",
+		"Heap Objs [Inserts]",
+		"[Inclusion] Proof Gen",
+		"[Inclusion] Proof Size",
+		"[Inclusion] Proof Verify",
+		"[Exclusion] Proof Gen",
+		"[Exclusion] Proof Size",
+		"[Exclusion] Proof Verify",
+		"Elements [Deletes]",
+		"Delete Time [Deletes]",
+		"Avg/Block [Deletes]",
+		"Mem Alloc MB [Deletes]",
+		"Total Alloc MB [Deletes]",
+		"Heap Objs [Deletes]")
 
+	fmt.Printf("%-25s %-20s %-20s %-25s %-25s %-22s %-22s %-23s %-25s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 20),
+		strings.Repeat("-", 20),
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 22),
+		strings.Repeat("-", 22),
+		strings.Repeat("-", 23),
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 22),
+		strings.Repeat("-", 23),
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 22),
+		strings.Repeat("-", 20),
+		strings.Repeat("-", 20),
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 25),
+		strings.Repeat("-", 22))
 	for _, r := range allResults {
-		fmt.Printf("%-12d %-15v %-15v %-15v %-12d %-15v %-15.2f %-15.2f %-12d\n",
-			r.ElementCount,
+		fmt.Printf("%-25d %-20v %-20v %-25.2f %-25.2f %-22d %-22v %-23d %-25v %-22v %-23d %-25v %-22d %-20v %-20v %-25.2f %-25.2f %-22d\n",
+			r.InsertElementCount,
 			r.InsertionTime,
 			r.AvgPerBlock,
-			r.ProofGenTime,
-			r.ProofSize,
-			r.ProofVerifyTime,
 			r.MemoryAllocatedMB,
 			r.TotalAllocatedMB,
-			r.HeapObjects)
+			r.HeapObjects,
+			r.InclusionProofGenTime,
+			r.InclusionProofSize,
+			r.InclusionProofVerifyTime,
+			r.ExclusionProofGenTime,
+			r.ExclusionProofSize,
+			r.ExclusionProofVerifyTime,
+			r.DeleteElementCount,
+			r.DeletionTime,
+			r.AvgDeletionPerBlock,
+			r.DeletesMemoryAllocatedMB,
+			r.DeletesTotalAllocatedMB,
+			r.DeletesHeapObjects,
+		)
 	}
 }
 
@@ -176,19 +259,30 @@ func saveResultsToCSV() {
 	}
 	defer file.Close()
 
-	file.WriteString("Elements,InsertTime(ns),AvgPerBlock(ns),ProofGen(ns),ProofSize(bytes),ProofVerify(ns),MemAllocMB,TotalAllocMB,HeapObjects\n")
+	// Header
+	file.WriteString("InsertElements,InsertTime(ns),AvgPerBlock(ns),MemAllocMB,TotalAllocMB,HeapObjects,InclusionProofGen(ns),InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofGen(ns),ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects\n")
 
+	// Data rows
 	for _, r := range allResults {
-		line := fmt.Sprintf("%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
-			r.ElementCount,
+		line := fmt.Sprintf("%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
+			r.InsertElementCount,
 			r.InsertionTime.Nanoseconds(),
 			r.AvgPerBlock.Nanoseconds(),
-			r.ProofGenTime.Nanoseconds(),
-			r.ProofSize,
-			r.ProofVerifyTime.Nanoseconds(),
 			r.MemoryAllocatedMB,
 			r.TotalAllocatedMB,
-			r.HeapObjects)
+			r.HeapObjects,
+			r.InclusionProofGenTime.Nanoseconds(),
+			r.InclusionProofSize,
+			r.InclusionProofVerifyTime.Nanoseconds(),
+			r.ExclusionProofGenTime.Nanoseconds(),
+			r.ExclusionProofSize,
+			r.ExclusionProofVerifyTime.Nanoseconds(),
+			r.DeleteElementCount,
+			r.DeletionTime.Nanoseconds(),
+			r.AvgDeletionPerBlock.Nanoseconds(),
+			r.DeletesMemoryAllocatedMB,
+			r.DeletesTotalAllocatedMB,
+			r.DeletesHeapObjects)
 		file.WriteString(line)
 	}
 
@@ -200,12 +294,15 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	t.Logf("Starting test with %d elements", options.ElementCount)
 	t.Logf("========================================")
 
+	//// Tree
 	if options.HashAlgo == "" {
 		options.HashAlgo = utils.SHA256
 	}
 
 	avl := avlhashtree.NewAVLHashTree(options.HashAlgo)
-	
+	////
+
+	//// Block size and Data
 	blockSize := options.BlockSizeBytes
 	if blockSize == 0 {
 		blockSize = 1024
@@ -214,29 +311,57 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	if dataSize == 0 {
 		dataSize = 8
 	}
+	////
 
+	//// Inclusion proof
 	sampleSize := int(math.Round(float64(float32(options.ElementCount) * options.SampleSize)))
 	if sampleSize < 1 {
 		sampleSize = 1
 	}
+
 	sampleIndices := map[int]bool{}
-	for j := 0; j < sampleSize; j++ {
-		sampleIndices[randMath.Intn(options.ElementCount)] = true
-	}
-
-	proofGenerationKeySample := make([]utils.Hash, 0, sampleSize)
-
-	results := map[string]any{}
-
-	deleteIndices := map[int]bool{}
-	deletesKeySample := make([]utils.Hash, 0, options.DeleteCount)
-
-	if options.MeasureDeletes && options.DeleteCount > 0 {
-		for j := 0; j < options.DeleteCount; j++ {
-			deleteIndices[randMath.Intn(options.DeleteCount)] = true
+	var proofGenerationKeySample []utils.Hash
+	if options.IncludeInclusionProof {
+		proofGenerationKeySample = make([]utils.Hash, sampleSize)
+		if options.InclusionProofSequential {
+			for j := 0; j < sampleSize; j++ {
+				sampleIndices[j] = true
+			}
+		} else {
+			for len(sampleIndices) < sampleSize {
+				sampleIndices[randMath.Intn(options.ElementCount)] = true
+			}
 		}
 	}
+	////
 
+	//// General benchmark results
+	results := map[string]any{}
+	////
+
+	//// Deletes
+	deleteIndices := map[int]bool{}
+	var deletesKeySample []utils.Hash
+
+	if options.MeasureDeletes && options.DeleteCount > 0 {
+		deletesKeySample = make([]utils.Hash, options.DeleteCount)
+		if options.DeleteSequential {
+			// sequential deletes
+			for j := 0; j < options.DeleteCount; j++ {
+				deleteIndices[j] = true
+			}
+		} else {
+			// random deletes
+			for len(deleteIndices) < options.DeleteCount {
+				sampleIndices[randMath.Intn(options.ElementCount)] = true
+			}
+		}
+	}
+	////
+
+	//// Inserts
+	sampleIndicesI := 0
+	deleteSampleIndicesI := 0
 	if options.MeasureInserts {
 		// Memory stats before
 		var m1 runtime.MemStats
@@ -254,11 +379,13 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			hashOfBlock := utils.GenerateHashSha256(block)
 
 			if _, ok := sampleIndices[i]; ok {
-				proofGenerationKeySample = append(proofGenerationKeySample, hashOfBlock)
+				proofGenerationKeySample[sampleIndicesI] = hashOfBlock
+				sampleIndicesI++
 			}
 
 			if _, ok := deleteIndices[i]; ok {
-				deletesKeySample = append(deletesKeySample, hashOfBlock)
+				deletesKeySample[deleteSampleIndicesI] = hashOfBlock
+				deleteSampleIndicesI++
 			}
 
 			err := avl.Insert(hashOfBlock, data)
@@ -286,10 +413,11 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			HeapObjects:  heapObjects,
 		}
 	}
+	////
 
-	proofResults := map[int]ProofResult{}
-
+	//// Inclusion Proofs
 	if options.IncludeInclusionProof {
+		inclusionProofResults := map[int]ProofResult{}
 		for idx, proofKey := range proofGenerationKeySample {
 			startProof := time.Now()
 			randKeyCBOR, _ := utils.EncodeCBOR(proofKey)
@@ -314,29 +442,72 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 
 			elapsedVerif := time.Since(startVerif)
 
-			proofResults[idx] = ProofResult{
+			inclusionProofResults[idx] = ProofResult{
 				proofSizeBytes:   len(proofCbor),
 				proofTime:        elapsedProof,
 				verificationTime: elapsedVerif,
 			}
+
+			avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(inclusionProofResults)
+
+			results["inclusionProof"] = InclusionExclusionProofResult{
+				avgProofTime,
+				avgProofSize,
+				avgVerifyTime,
+			}
 		}
 	}
+	////
 
-	// Proofs
-	var totalProofTime time.Duration
-	var totalProofSize int
-	var totalVerifyTime time.Duration
+	//// Exclusion Proofs
+	if options.IncludeExclusionProof {
+		exclusionProofResults := map[int]ProofResult{}
+		for idx := range sampleSize {
+			startProof := time.Now()
+			block := make([]byte, blockSize)
+			rand.Read(block)
 
-	for _, pr := range proofResults {
-		totalProofTime += pr.proofTime
-		totalProofSize += pr.proofSizeBytes
-		totalVerifyTime += pr.verificationTime
+			hashOfBlock := utils.GenerateHashSha256(block)
+			randKeyCBOR, _ := utils.EncodeCBOR(hashOfBlock)
+
+			proof, _ := avl.GenerateInclusionExclusionProof(randKeyCBOR)
+			elapsedProof := time.Since(startProof)
+
+			publicProof := proof.ToPublicProof()
+			proofCbor, _ := utils.EncodeCBOR(publicProof)
+
+			startVerif := time.Now()
+
+			res, err := avl.VerifyPublicProof(publicProof)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if res != true {
+				t.Errorf("Verification failed!")
+			}
+
+			elapsedVerif := time.Since(startVerif)
+
+			exclusionProofResults[idx] = ProofResult{
+				proofSizeBytes:   len(proofCbor),
+				proofTime:        elapsedProof,
+				verificationTime: elapsedVerif,
+			}
+
+			avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(exclusionProofResults)
+
+			results["exclusionProof"] = InclusionExclusionProofResult{
+				avgProofTime,
+				avgProofSize,
+				avgVerifyTime,
+			}
+		}
 	}
+	////
 
-	avgProofTime := totalProofTime / time.Duration(len(proofResults))
-	avgProofSize := totalProofSize / len(proofResults)
-	avgVerifyTime := totalVerifyTime / time.Duration(len(proofResults))
-
+	//// Deletes
 	if options.MeasureDeletes && options.DeleteCount > 0 {
 		// Memory stats before
 		var m1 runtime.MemStats
@@ -371,6 +542,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			HeapObjects:  heapObjects,
 		}
 	}
+	////
 
 	// Log individual test results
 	t.Logf("Inserted %d blocks", options.ElementCount)
@@ -382,9 +554,13 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		}
 	}
 
-	t.Logf("Average time for Proof generation: %v", avgProofTime)
-	t.Logf("Average proof size in bytes: %d", avgProofSize)
-	t.Logf("Average time for Proof verification: %v", avgVerifyTime)
+	if val, ok := results["inclusionProof"]; ok {
+		if proofResult, ok := val.(InclusionExclusionProofResult); ok {
+			t.Logf("Average time for Inclusion Proof generation: %v", proofResult.avgProofTime)
+			t.Logf("Average Inclusion Proof size in bytes: %d", proofResult.avgProofSize)
+			t.Logf("Average time for Inclusion Proof verification: %v", proofResult.avgVerifyTime)
+		}
+	}
 
 	if val, ok := results["inserts"]; ok {
 		if inserts, ok := val.(InsertDeleteMetrics); ok {
@@ -404,35 +580,49 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		}
 	}
 
+	if val, ok := results["exclusionProof"]; ok {
+		if proofResult, ok := val.(InclusionExclusionProofResult); ok {
+			t.Logf("Average time for Exclusion Proof generation: %v", proofResult.avgProofTime)
+			t.Logf("Average Exclusion Proof size in bytes: %d", proofResult.avgProofSize)
+			t.Logf("Average time for Exclusion Proof verification: %v", proofResult.avgVerifyTime)
+		}
+	}
+
 	// Force GC between tests
 	runtime.GC()
 	time.Sleep(100 * time.Millisecond)
 
 	result := BenchmarkResult{
-		ElementCount:    options.ElementCount,
-		ProofGenTime:    avgProofTime,
-		ProofSize:       avgProofSize,
-		ProofVerifyTime: avgVerifyTime,
+		InsertElementCount: options.ElementCount,
 	}
 
-	if val, ok := results["inserts"]; ok {
-		if inserts, ok := val.(InsertDeleteMetrics); ok {
-			result.InsertionTime = inserts.Elapsed
-			result.AvgPerBlock = inserts.Elapsed / time.Duration(options.ElementCount)
-			result.MemoryAllocatedMB = inserts.AllocatedMB
-			result.TotalAllocatedMB = inserts.TotalAllocMB
-			result.HeapObjects = inserts.HeapObjects
-		}
+	if inserts, ok := results["inserts"].(InsertDeleteMetrics); ok {
+		result.InsertionTime = inserts.Elapsed
+		result.AvgPerBlock = inserts.Elapsed / time.Duration(options.ElementCount)
+		result.MemoryAllocatedMB = inserts.AllocatedMB
+		result.TotalAllocatedMB = inserts.TotalAllocMB
+		result.HeapObjects = inserts.HeapObjects
 	}
 
-	if val, ok := results["deletes"]; ok {
-		if deletes, ok := val.(InsertDeleteMetrics); ok {
-			result.DeletionTime = deletes.Elapsed
-			result.AvgDeletionPerBlock = deletes.Elapsed / time.Duration(options.DeleteCount)
-			result.DeletesMemoryAllocatedMB = deletes.AllocatedMB
-			result.DeletesTotalAllocatedMB = deletes.TotalAllocMB
-			result.DeletesHeapObjects = deletes.HeapObjects
-		}
+	if deletes, ok := results["inserts"].(InsertDeleteMetrics); ok {
+		result.DeleteElementCount = options.DeleteCount
+		result.DeletionTime = deletes.Elapsed
+		result.AvgDeletionPerBlock = deletes.Elapsed / time.Duration(options.DeleteCount)
+		result.DeletesMemoryAllocatedMB = deletes.AllocatedMB
+		result.DeletesTotalAllocatedMB = deletes.TotalAllocMB
+		result.DeletesHeapObjects = deletes.HeapObjects
+	}
+
+	if proofResult, ok := results["inclusionProof"].(InclusionExclusionProofResult); ok {
+		result.InclusionProofGenTime = proofResult.avgProofTime
+		result.InclusionProofSize = proofResult.avgProofSize
+		result.InclusionProofVerifyTime = proofResult.avgVerifyTime
+	}
+
+	if proofResult, ok := results["exclusionProof"].(InclusionExclusionProofResult); ok {
+		result.ExclusionProofGenTime = proofResult.avgProofTime
+		result.ExclusionProofSize = proofResult.avgProofSize
+		result.ExclusionProofVerifyTime = proofResult.avgVerifyTime
 	}
 
 	return result
