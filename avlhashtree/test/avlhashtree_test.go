@@ -7,6 +7,7 @@ import (
 	randMath "math/rand"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +61,7 @@ type BenchmarkOptions struct {
 	DeleteCount              int
 	HashAlgo                 utils.HashAlgo
 	DeleteSequential         bool
+	CPUProfile               bool
 }
 
 type ProofResult struct {
@@ -83,14 +85,17 @@ type InsertDeleteMetrics struct {
 	HeapObjects  uint64
 }
 
+var now time.Time
+
 func TestMain(m *testing.M) {
 	// Run all tests
+	now = time.Now()
 	exitCode := m.Run()
 
 	// After all tests, print combined results
 	if len(allResults) > 0 {
 		printCombinedResults()
-		saveResultsToCSV()
+		saveResultsToCSV(now)
 	}
 
 	os.Exit(exitCode)
@@ -118,62 +123,62 @@ func calculateProofBenchmark(proofResults map[int]ProofResult) (time.Duration, i
 // ------------------------------
 
 func TestAVL_10k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8, MeasureDeletes: true, DeleteCount: 1000})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8, MeasureDeletes: true, DeleteCount: 1000})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_50k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8, MeasureDeletes: true, DeleteCount: 1000})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_100k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 100_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 100_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_200k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 200_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 200_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_300k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 300_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 300_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_500k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 500_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 500_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_700k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 700_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 700_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_900k(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 900_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 900_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_1M(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 1_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 1_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_2M(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 2_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 2_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_5M(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 5_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 5_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
 func TestAVL_10M(t *testing.T) {
-	result := runBenchmark(t, &BenchmarkOptions{ElementCount: 10_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
+	result := testWithProfile(t, &BenchmarkOptions{CPUProfile: true, ElementCount: 10_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 1024, DataSizeBytes: 8})
 	allResults = append(allResults, result)
 }
 
@@ -247,8 +252,23 @@ func printCombinedResults() {
 	}
 }
 
-func saveResultsToCSV() {
+func testWithProfile(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
+	if !options.CPUProfile {
+		return runBenchmark(t, options)
+	}
+
 	now := time.Now()
+	filename := fmt.Sprintf("cpu_%dk_%02d-%02d-%d-%02d-%02d-%02d.prof", options.ElementCount/1000, now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
+	f, _ := os.Create(filename)
+	defer f.Close()
+
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
+	return runBenchmark(t, options)
+}
+
+func saveResultsToCSV(now time.Time) {
 	filename := fmt.Sprintf("%02d-%02d-%d-%02d-%02d-%02d.csv",
 		now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
 
@@ -329,6 +349,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			}
 		} else {
 			for len(sampleIndices) < sampleSize {
+				fmt.Println("inserts random loop")
 				sampleIndices[randMath.Intn(options.ElementCount)] = true
 			}
 		}
@@ -353,6 +374,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		} else {
 			// random deletes
 			for len(deleteIndices) < options.DeleteCount {
+				fmt.Println("deletes random loop")
 				sampleIndices[randMath.Intn(options.ElementCount)] = true
 			}
 		}
@@ -604,7 +626,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		result.HeapObjects = inserts.HeapObjects
 	}
 
-	if deletes, ok := results["inserts"].(InsertDeleteMetrics); ok {
+	if deletes, ok := results["deletes"].(InsertDeleteMetrics); ok {
 		result.DeleteElementCount = options.DeleteCount
 		result.DeletionTime = deletes.Elapsed
 		result.AvgDeletionPerBlock = deletes.Elapsed / time.Duration(options.DeleteCount)
