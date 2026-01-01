@@ -344,12 +344,13 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	if options.IncludeInclusionProof {
 		proofGenerationKeySample = make([]utils.Hash, sampleSize)
 		if options.InclusionProofSequential {
+			// nodes taken for proof sequentially
 			for j := 0; j < sampleSize; j++ {
 				sampleIndices[j] = true
 			}
 		} else {
 			for len(sampleIndices) < sampleSize {
-				fmt.Println("inserts random loop")
+				// nodes taken for proof randomly
 				sampleIndices[randMath.Intn(options.ElementCount)] = true
 			}
 		}
@@ -374,8 +375,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		} else {
 			// random deletes
 			for len(deleteIndices) < options.DeleteCount {
-				fmt.Println("deletes random loop")
-				sampleIndices[randMath.Intn(options.ElementCount)] = true
+				deleteIndices[randMath.Intn(options.ElementCount)] = true
 			}
 		}
 	}
