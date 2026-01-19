@@ -44,6 +44,14 @@ func BuildHashCache(hashAlgo utils.HashAlgo) {
 
 type SMT struct {
 	HashAlgo utils.HashAlgo
+	Root     utils.Hash
+}
+
+type Node struct {
+	Key  utils.Hash
+	Data utils.CBORData
+	Hash utils.Hash
+	Path []byte
 }
 
 func NewSMT(hashAlgo utils.HashAlgo) *SMT {
