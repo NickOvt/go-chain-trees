@@ -124,6 +124,27 @@ func GenerateHash(hashAlgo HashAlgo, data []byte) Hash {
 	return GenerateHashSha256(data)
 }
 
+// GetHashAlgoOutputBitCount outputs the output bit count of a specified hashAlgo. Defaults to 256 bits for SHA256
+//
+// Parameters:
+//   - hashAlgo: The HashAlgo used (SHA256, SHA384, SHA512)
+//
+// Returns:
+//   - int: The count of bits in the output hash
+func GetHashAlgoOutputBitCount(hashAlgo HashAlgo) int {
+	hashAlgoToHashAlgoOutputBitCount := map[HashAlgo]int{
+		SHA256: 256,
+		SHA384: 384,
+		SHA512: 512,
+	}
+
+	if hashAlgoOutputBitCount, ok := hashAlgoToHashAlgoOutputBitCount[hashAlgo]; ok {
+		return hashAlgoOutputBitCount
+	}
+
+	return 256 // default SHA256
+}
+
 // ConcatDataAndGenerateHash concatenates multiple CBOR byte arrays
 // and calculates their combined hash.
 //
@@ -143,6 +164,31 @@ func ConcatDataAndGenerateHash(hashAlgo HashAlgo, data ...CBORData) Hash {
 	combined := make([]byte, 0, totalLen)
 
 	for _, slice := range data {
+		combined = append(combined, slice...)
+	}
+
+	return GenerateHash(hashAlgo, combined)
+}
+
+// ConcatHashesAndGenerateHash concatenates multiple hashes
+// and calculates their combined hash.
+//
+// Parameters:
+//   - hashAlgo: The HashAlgo used (SHA256, SHA384, SHA512)
+//   - hashes: Variable number of hashes to concatenate and hash
+//
+// Returns:
+//   - Hash: The hash of the concatenated hashes
+func ConcatHashesAndGenerateHash(hashAlgo HashAlgo, hashes ...Hash) Hash {
+	// Calculate total length needed to preallocate memory
+	totalLen := 0
+	for _, slice := range hashes {
+		totalLen += len(slice)
+	}
+
+	combined := make([]byte, 0, totalLen)
+
+	for _, slice := range hashes {
 		combined = append(combined, slice...)
 	}
 
