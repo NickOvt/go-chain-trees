@@ -101,6 +101,18 @@ const (
 	SHA512 HashAlgo = "sha512"
 )
 
+var hashAlgoToHashFuncMap = map[HashAlgo]GenerateHashFunc{
+	SHA256: GenerateHashSha256,
+	SHA384: GenerateHashSha384,
+	SHA512: GenerateHashSha512,
+}
+
+var hashAlgoToHashAlgoOutputBitCount = map[HashAlgo]int{
+	SHA256: 256,
+	SHA384: 384,
+	SHA512: 512,
+}
+
 // GenerateHash generates a hash of the given byte data using specified HashAlgo.
 //
 // Parameters:
@@ -110,18 +122,28 @@ const (
 // Returns:
 //   - Hash: The HashAlgo hash of the data as byte slice
 func GenerateHash(hashAlgo HashAlgo, data []byte) Hash {
-	hashAlgoToHashFuncMap := map[HashAlgo]GenerateHashFunc{
-		SHA256: GenerateHashSha256,
-		SHA384: GenerateHashSha384,
-		SHA512: GenerateHashSha512,
-	}
-
 	if hashFunc, ok := hashAlgoToHashFuncMap[hashAlgo]; ok {
 		return hashFunc(data)
 	}
 
 	// default to SHA256 if not found
 	return GenerateHashSha256(data)
+}
+
+// GenerateNullHash generates a null hash (hash of nil) for specified hashAlgo.
+//
+// Parameters:
+//   - hashAlgo: The HashAlgo used (SHA256, SHA384, SHA512)
+//
+// Returns:
+//   - Hash: The HashAlgo hash of nil
+func GenerateNullHash(hashAlgo HashAlgo) Hash {
+	if hashFunc, ok := hashAlgoToHashFuncMap[hashAlgo]; ok {
+		return hashFunc(nil)
+	}
+
+	// default to SHA256 if not found
+	return GenerateHashSha256(nil)
 }
 
 // GetHashAlgoOutputBitCount outputs the output bit count of a specified hashAlgo. Defaults to 256 bits for SHA256
@@ -132,12 +154,6 @@ func GenerateHash(hashAlgo HashAlgo, data []byte) Hash {
 // Returns:
 //   - int: The count of bits in the output hash
 func GetHashAlgoOutputBitCount(hashAlgo HashAlgo) int {
-	hashAlgoToHashAlgoOutputBitCount := map[HashAlgo]int{
-		SHA256: 256,
-		SHA384: 384,
-		SHA512: 512,
-	}
-
 	if hashAlgoOutputBitCount, ok := hashAlgoToHashAlgoOutputBitCount[hashAlgo]; ok {
 		return hashAlgoOutputBitCount
 	}
