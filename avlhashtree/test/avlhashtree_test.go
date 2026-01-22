@@ -6,6 +6,7 @@ import (
 	"math"
 	randMath "math/rand"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"strings"
@@ -254,25 +255,65 @@ func printCombinedResults() {
 
 func testWithProfile(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	if !options.CPUProfile {
+		// Force GC between tests
+		runtime.GC()
+		time.Sleep(100 * time.Millisecond)
 		return runBenchmark(t, options)
 	}
 
-	now := time.Now()
-	filename := fmt.Sprintf("cpu_%dk_%02d-%02d-%d-%02d-%02d-%02d.prof", options.ElementCount/1000, now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
-	f, _ := os.Create(filename)
-	defer f.Close()
+	currentDate := fmt.Sprintf("%02d-%02d-%d-%02d-%02d-%02d", now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
 
-	pprof.StartCPUProfile(f)
-	defer pprof.StopCPUProfile()
+	dirPath := currentDate
+	err := os.MkdirAll(currentDate, 0755)
+	if err != nil {
+		panic(err)
+	}
 
-	return runBenchmark(t, options)
+	filename := fmt.Sprintf("cpu_%dk_"+currentDate+".prof", options.ElementCount/1000)
+	// Force GC between tests
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+
+	cpuFile, err := os.Create(filepath.Join(dirPath, filename))
+	if err != nil {
+		t.Fatalf("failed to create CPU profile: %v", err)
+	}
+	defer cpuFile.Close()
+
+	if err := pprof.StartCPUProfile(cpuFile); err != nil {
+		t.Fatalf("failed to start CPU profile: %v", err)
+	}
+
+	result := runBenchmark(t, options)
+
+	pprof.StopCPUProfile()
+
+	runtime.GC()
+	heapFilename := fmt.Sprintf("heap_%dk_"+currentDate+".prof", options.ElementCount/1000)
+	heapFile, err := os.Create(filepath.Join(dirPath, heapFilename))
+	if err != nil {
+		t.Fatalf("failed to create heap profile: %v", err)
+	}
+	defer heapFile.Close()
+
+	if err := pprof.WriteHeapProfile(heapFile); err != nil {
+		t.Fatalf("failed to write heap profile: %v", err)
+	}
+
+	return result
 }
 
 func saveResultsToCSV(now time.Time) {
-	filename := fmt.Sprintf("%02d-%02d-%d-%02d-%02d-%02d.csv",
-		now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
+	currentDate := fmt.Sprintf("%02d-%02d-%d-%02d-%02d-%02d", now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
+	dirPath := currentDate
+	err := os.MkdirAll(currentDate, 0755)
+	if err != nil {
+		panic(err)
+	}
 
-	file, err := os.Create(filename)
+	filename := currentDate + ".csv"
+
+	file, err := os.Create(filepath.Join(dirPath, filename))
 	if err != nil {
 		fmt.Printf("Error creating CSV file: %v\n", err)
 		return
@@ -609,10 +650,6 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			t.Logf("Average time for Exclusion Proof verification: %v", proofResult.avgVerifyTime)
 		}
 	}
-
-	// Force GC between tests
-	runtime.GC()
-	time.Sleep(100 * time.Millisecond)
 
 	result := BenchmarkResult{
 		InsertElementCount: options.ElementCount,
