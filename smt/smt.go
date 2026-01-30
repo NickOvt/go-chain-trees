@@ -1,6 +1,100 @@
 package smt
 
-import "github.com/NickOvt/go-chain-trees/utils"
+import (
+	"encoding/hex"
+
+	"github.com/NickOvt/go-chain-trees/utils"
+)
+
+func EncodePath(data []byte, bitsToRemove int) []byte {
+	if len(data) == 0 {
+		return data
+	}
+
+	totalBits := len(data)*8 - bitsToRemove
+	if totalBits <= 0 {
+		return data
+	}
+
+	result := make([]byte, (totalBits+8)/8) // round up for padding
+
+	for i := 0; i < totalBits; i++ {
+		byteIdx := i / 8
+		bitIdx := 7 - (i % 8)
+
+		if data[byteIdx]&(1<<bitIdx) != 0 { // original data had 1 at this position
+			result[byteIdx] |= 1 << bitIdx // set non 0 bits to 1 in result
+		}
+	}
+
+	// prepend 1-bit
+	paddingBits := (8 - (totalBits+1)%8) % 8
+	finalLen := (totalBits + 1 + paddingBits + 7) / 8
+	final := make([]byte, finalLen)
+
+	// set 1-bit marker
+	final[0] = 1 << (7 - paddingBits)
+
+	// copy data after 1-bit
+	for i := 0; i < totalBits; i++ {
+		byteIdx := i / 8
+		bitIdx := 7 - (i % 8)
+
+		destBitPos := paddingBits + 1 + i  // shift by padding
+		destByteIdx := destBitPos / 8      // shift by padding
+		destBitIdx := 7 - (destBitPos % 8) // shift by padding
+
+		if result[byteIdx]&(1<<bitIdx) != 0 {
+			final[destByteIdx] |= 1 << destBitIdx
+		}
+	}
+
+	return final
+}
+
+func DecodePath(encoded []byte) []byte {
+	if len(encoded) == 0 {
+		return encoded
+	}
+
+	// find the 1-bit marker
+	var markerPos int
+	found := false
+	for i := 0; i < 8; i++ { // check only first byte
+		if encoded[0]&(1<<(7-i)) != 0 {
+			markerPos = i
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return encoded
+	}
+
+	// extract bits after marker
+	dataBits := len(encoded)*8 - markerPos - 1
+	if dataBits <= 0 {
+		return encoded
+	}
+
+	result := make([]byte, (dataBits+7)/8)
+
+	for i := 0; i < dataBits; i++ {
+		srcBitPos := markerPos + 1 + i
+		srcByteIdx := srcBitPos / 8
+		srcBitIdx := 7 - (srcBitPos % 8)
+
+		destByteIdx := i / 8
+		destBitIdx := 7 - (i % 8)
+
+		if encoded[srcByteIdx]&(1<<srcBitIdx) != 0 {
+			result[destByteIdx] |= 1 << destBitIdx
+		}
+	}
+
+	return result
+}
 
 type SMT struct {
 	HashAlgo       utils.HashAlgo
@@ -67,4 +161,47 @@ func (t *SMT) Init() {
 	t.emptyHashCache = make(map[int]utils.Hash)
 
 	t.BuildHashCache(t.HashAlgo)
+}
+
+func (t *SMT) Update(key []byte, data []byte) (bool, error) {
+	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
+	nodePath := nodeKeyHash
+
+	if existingNode, ok := t.Nodes[hex.EncodeToString(nodePath)]; ok {
+		// have duplicate, update data
+		cborData, err := utils.EncodeCBOR(data)
+
+		if err != nil {
+			return false, err
+		}
+
+		existingNode.Data = cborData
+
+		// TODO: Update parents
+	}
+
+	// node does not exist, insert
+	node := &Node{Key: nodeKeyHash, Data: data, Path: nodePath}
+	t.Nodes[hex.EncodeToString(nodePath)] = node
+
+	siblingPath := utils.FlipLastBit(nodePath)
+
+	if _, ok := t.Nodes[hex.EncodeToString(siblingPath)]; ok { // existingSibling, ok
+		// sibling exists -> find parent
+
+		parentPath := EncodePath(nodePath, 1)
+
+		if _, ok := t.Nodes[hex.EncodeToString(parentPath)]; ok {
+			// parent found
+			// TODO: update parents
+		}
+
+		// parent not found -> insert parent
+		parentNode := &Node{Key: parentPath, Path: parentPath}
+		t.Nodes[hex.EncodeToString(parentPath)] = parentNode
+
+		// TODO: update parents
+	}
+
+	return true, nil
 }

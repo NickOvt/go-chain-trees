@@ -236,3 +236,29 @@ func EncodeCBORList(v ...any) ([]CBORData, error) {
 
 	return cborDataList, nil
 }
+
+// FlipLastBit flips last bit of byteArray argument (array of bytes)
+//
+// Parameters:
+//   - byteArray: Input byte array
+//
+// Returns:
+//   - []byte: A new byteArray with last bit flipped
+func FlipLastBit(byteArray []byte) []byte {
+	byteArray[len(byteArray)-1] ^= 1
+	return byteArray
+}
+
+// FlipBitAtN flips n-th bit of byteArray argument (array of bytes)
+//
+// Parameters:
+//   - byteArray: Input byte array
+//
+// Returns:
+//   - []byte: A new byteArray with n-th bit flipped
+func FlipBitAtN(byteArray []byte, n int) []byte {
+	byteIdx := n / 8
+	bitIdx := 7 - (n % 8)
+	byteArray[byteIdx] ^= 1 << bitIdx
+	return byteArray
+}
