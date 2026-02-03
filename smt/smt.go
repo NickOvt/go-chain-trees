@@ -1,14 +1,12 @@
 package smt
 
 import (
-	"encoding/hex"
-
 	"github.com/NickOvt/go-chain-trees/utils"
 )
 
-func EncodePath(data []byte, depth int) []byte {
+func EncodePath(data []byte, depth int) ([]byte, int) {
 	if len(data) == 0 {
-		return data
+		return []byte{byte(1)}, 0
 	}
 
 	totalBits := depth
@@ -49,7 +47,7 @@ func EncodePath(data []byte, depth int) []byte {
 		}
 	}
 
-	return final
+	return final, totalBits
 }
 
 func DecodePath(encoded []byte) []byte {
@@ -98,18 +96,18 @@ func DecodePath(encoded []byte) []byte {
 
 type SMT struct {
 	HashAlgo       utils.HashAlgo
-	Root           utils.Hash
-	Nodes          map[string]*Node
+	Root           *Node
 	emptyHashCache map[int]utils.Hash
 	emptyHash      utils.Hash
 }
 
 type Node struct {
-	Key    utils.Hash     // in case of a non-leaf node it will be nil
-	Data   utils.CBORData // in case of a non-leaf node it will be nil
-	Hash   utils.Hash     // present on every node
-	Path   []byte         // nil in case of a root node
-	IsLeaf bool
+	Data      utils.CBORData // in case of a non-leaf node it will be nil
+	Hash      utils.Hash     // present on every node. hash(path, data)
+	Path      []byte         // nil in case of a root node. Encoded path from parent to this node
+	LeftHash  utils.Hash     // For branch nodes
+	RightHash utils.Hash     // For branch nodes
+	IsLeaf    bool
 }
 
 func NewSMT(hashAlgo utils.HashAlgo) *SMT {
@@ -157,107 +155,17 @@ func (t *SMT) Init() {
 	}
 
 	// set initial values
-	t.Root = t.GetEmptyHash()
-	t.Nodes = make(map[string]*Node)
+
+	rootNode := &Node{
+		Data:      nil,
+		LeftHash:  nil,
+		RightHash: nil,
+		Hash:      utils.ConcatHashesAndGenerateHash(t.HashAlgo, nil, nil, nil),
+		IsLeaf:    false,
+	}
+	t.Root = rootNode
+
 	t.emptyHashCache = make(map[int]utils.Hash)
 
 	t.BuildHashCache(t.HashAlgo)
-}
-
-// Update insert or update value
-//func (t *SMT) Update(key []byte, data []byte) (bool, error) {
-//	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
-//	nodePath := nodeKeyHash
-//
-//	if existingNode, ok := t.Nodes[hex.EncodeToString(nodePath)]; ok {
-//		// have duplicate, update data
-//		cborData, err := utils.EncodeCBOR(data)
-//
-//		if err != nil {
-//			return false, err
-//		}
-//
-//		existingNode.Data = cborData
-//
-//		// TODO: Update parents
-//	}
-//
-//	// node does not exist, insert
-//	node := &Node{Key: nodeKeyHash, Data: data, Path: nodePath}
-//	t.Nodes[hex.EncodeToString(nodePath)] = node
-//
-//	// in SMT same level sibling has last bit flipped
-//	siblingPath := utils.FlipLastBit(nodePath)
-//
-//	if _, ok := t.Nodes[hex.EncodeToString(siblingPath)]; ok { // existingSibling, ok
-//		// sibling exists -> find parent
-//
-//		parentPath := EncodePath(nodePath, 1) // parent path is the intersection of two children nodes, that is path without last bit
-//
-//		if _, ok := t.Nodes[hex.EncodeToString(parentPath)]; ok {
-//			// parent found
-//			// TODO: update parents
-//		}
-//
-//		// parent not found -> insert parent
-//		parentNode := &Node{Key: parentPath, Path: parentPath}
-//		t.Nodes[hex.EncodeToString(parentPath)] = parentNode
-//
-//		// TODO: update parents
-//	} else {
-//		// current level sibling does not exist
-//	}
-//
-//	return true, nil
-//}
-
-// Update insert or update value
-func (t *SMT) Update(key []byte, data []byte) (bool, error) {
-	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
-	nodePath := nodeKeyHash[:]
-
-	newRoot, err := t.updateRecursive(nodePath, data, 0, t.Root)
-	if err != nil {
-		return false, err
-	}
-
-	t.Root = newRoot
-	return true, nil
-
-}
-
-func (t *SMT) updateRecursive(nodePath utils.Hash, data []byte, depth int, currentRoot utils.Hash) (utils.Hash, error) {
-	if depth == utils.GetHashAlgoOutputBitCount(t.HashAlgo) {
-		nodePathEnc := EncodePath(nodePath, depth)
-
-		leaf := &Node{
-			Key:    nodePathEnc,
-			Data:   data,
-			Path:   nodePathEnc,
-			IsLeaf: true,
-		}
-
-		t.Nodes[hex.EncodeToString(nodePathEnc)] = leaf
-		return leaf.Key, nil
-	}
-
-	if hex.EncodeToString(currentRoot) == hex.EncodeToString(t.GetEmptyHash()) {
-		// root is empty, first leaf inserted
-
-		nodePathEnc := EncodePath(nodePath, depth)
-
-		leaf := &Node{
-			Key:    nodePathEnc,
-			Data:   data,
-			Path:   nodePathEnc,
-			IsLeaf: true,
-		}
-
-		t.Nodes[hex.EncodeToString(nodePathEnc)] = leaf
-		return leaf.Key, nil
-	}
-
-	existingNode, _ := t.Nodes[hex.EncodeToString(currentRoot)]
-
-	return []byte{}, nil
 }

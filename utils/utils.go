@@ -263,14 +263,14 @@ func FlipBitAtN(byteArray []byte, n int) []byte {
 	return byteArray
 }
 
-// getBit get bit value at position i
+// GetBit get bit value at position i
 //
 // Parameters:
 //   - byteArray: Input byte array
 //
 // Returns:
 //   - bool: Bit value at position i
-func getBit(byteArray []byte, i int) bool {
+func GetBit(byteArray []byte, i int) bool {
 	byteIdx := i / 8
 	if byteIdx >= len(byteArray) {
 		return false
