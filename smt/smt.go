@@ -102,11 +102,12 @@ type SMT struct {
 }
 
 type Node struct {
+	Key       utils.Hash     // Key of node (will be hashed by the tree hashAlgo), nil for branch node
 	Data      utils.CBORData // in case of a non-leaf node it will be nil
-	Hash      utils.Hash     // present on every node. hash(path, data)
+	Hash      utils.Hash     // present on every node. hash(path, data), for branch nodes hash(path, leftHash, rightHash)
 	Path      []byte         // nil in case of a root node. Encoded path from parent to this node
-	LeftHash  utils.Hash     // For branch nodes
-	RightHash utils.Hash     // For branch nodes
+	LeftNode  *Node          // For branch nodes
+	RightNode *Node          // For branch nodes
 	IsLeaf    bool
 }
 
@@ -155,11 +156,11 @@ func (t *SMT) Init() {
 	}
 
 	// set initial values
-
 	rootNode := &Node{
 		Data:      nil,
-		LeftHash:  nil,
-		RightHash: nil,
+		LeftNode:  nil,
+		RightNode: nil,
+		Path:      nil,
 		Hash:      utils.ConcatHashesAndGenerateHash(t.HashAlgo, nil, nil, nil),
 		IsLeaf:    false,
 	}
@@ -168,4 +169,181 @@ func (t *SMT) Init() {
 	t.emptyHashCache = make(map[int]utils.Hash)
 
 	t.BuildHashCache(t.HashAlgo)
+}
+
+func (t *SMT) GetRoot() *Node {
+	if t.Root == nil {
+		rootNode := &Node{
+			Data:      nil,
+			LeftNode:  nil,
+			RightNode: nil,
+			Path:      nil,
+			Hash:      utils.ConcatHashesAndGenerateHash(t.HashAlgo, nil, nil, nil),
+			IsLeaf:    false,
+		}
+		t.Root = rootNode
+	}
+
+	return t.Root
+}
+
+func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
+	return t.insert(key, data, t.GetRoot())
+}
+
+func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (bool, error) {
+	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
+	nodeDataCbor, err := utils.EncodeCBOR(data)
+
+	if err != nil {
+		return false, err
+	}
+
+	goLeft := utils.GetBit(nodeKeyHash, 0)
+
+	if goLeft {
+		// check left of current root
+		if currentRoot.LeftNode == nil {
+			// no node at all, insert directly new leaf
+			path := utils.ReverseBits(nodeKeyHash) // path to parent is reversed key
+			currentRoot.LeftNode = &Node{
+				Data:      nodeDataCbor,
+				LeftNode:  nil,
+				RightNode: nil,
+				Path:      path,
+				Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, path, nodeDataCbor),
+				IsLeaf:    true,
+				Key:       nodeKeyHash,
+			}
+			// TODO: recalculate root's hash
+		} else {
+			// have node at left side
+			if currentRoot.LeftNode.IsLeaf {
+				// left is leaf, create branch
+				// find common prefix of inserted and current leaf on the left
+				commonPrefix, commonPrefixLen, commonPrefixPaddingLen := utils.FindCommonBitPrefix(currentRoot.LeftNode.Key, nodeKeyHash)
+				branchNodePath, _ := EncodePath(utils.ReverseBits(commonPrefix), commonPrefixPaddingLen) // use padding here as we have reversed prefix
+				branchNode := &Node{
+					Data:      nil,
+					LeftNode:  nil,
+					RightNode: nil,
+					Path:      branchNodePath,
+					IsLeaf:    false,
+					Key:       nil,
+				}
+
+				newNodeKeyCut, _, newKeyPaddingLen := utils.RemoveFirstNBits(nodeKeyHash, commonPrefixLen)
+				newNodePath, _ := EncodePath(utils.ReverseBits(newNodeKeyCut), newKeyPaddingLen)
+
+				oldNodeKeyCut, _, oldKeyPaddingLen := utils.RemoveFirstNBits(currentRoot.LeftNode.Key, commonPrefixLen)
+				oldNodeNewPath, _ := EncodePath(utils.ReverseBits(oldNodeKeyCut), oldKeyPaddingLen)
+				currentRoot.LeftNode.Path = oldNodeNewPath
+				currentRoot.LeftNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, currentRoot.LeftNode.Path, currentRoot.LeftNode.Data)
+
+				if utils.GetBit(currentRoot.LeftNode.Key, commonPrefixLen) {
+					// old left node goes right now, new goes left
+					branchNode.RightNode = currentRoot.LeftNode
+					branchNode.LeftNode = &Node{
+						Data:      nodeDataCbor,
+						LeftNode:  nil,
+						RightNode: nil,
+						Path:      newNodePath,
+						IsLeaf:    true,
+						Key:       nodeKeyHash,
+						Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, newNodePath, nodeDataCbor),
+					} // the inserted node goes here
+				} else {
+					// old left node stays left, new goes right
+					branchNode.RightNode = &Node{
+						Data:      nodeDataCbor,
+						LeftNode:  nil,
+						RightNode: nil,
+						Path:      newNodePath,
+						IsLeaf:    true,
+						Key:       nodeKeyHash,
+						Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, newNodePath, nodeDataCbor),
+					} // the inserted node goes here
+					branchNode.LeftNode = currentRoot.LeftNode
+				}
+				branchNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, branchNode.Path, branchNode.LeftNode.Hash, branchNode.RightNode.Hash)
+				currentRoot.LeftNode = branchNode
+				// TODO: recalculate root's hash
+			} else {
+				// left is branch, recurse
+			}
+		}
+	} else {
+		// check right of current root
+		if currentRoot.RightNode == nil {
+			// no node at all
+			path := utils.ReverseBits(nodeKeyHash) // path to parent is reversed key
+			currentRoot.RightNode = &Node{
+				Data:      nodeDataCbor,
+				LeftNode:  nil,
+				RightNode: nil,
+				Path:      path,
+				Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, path, nodeDataCbor),
+				IsLeaf:    true,
+				Key:       nodeKeyHash,
+			}
+			// TODO: recalculate root's hash
+		} else {
+			// have node at right side
+			if currentRoot.RightNode.IsLeaf {
+				// right is leaf, create branch
+				// find common prefix of inserted and current leaf on the left
+				commonPrefix, commonPrefixLen, commonPrefixPaddingLen := utils.FindCommonBitPrefix(currentRoot.RightNode.Key, nodeKeyHash)
+				branchNodePath, _ := EncodePath(utils.ReverseBits(commonPrefix), commonPrefixPaddingLen) // use padding here as we have reversed prefix
+				branchNode := &Node{
+					Data:      nil,
+					LeftNode:  nil,
+					RightNode: nil,
+					Path:      branchNodePath,
+					IsLeaf:    false,
+					Key:       nil,
+				}
+
+				newNodeKeyCut, _, newKeyPaddingLen := utils.RemoveFirstNBits(nodeKeyHash, commonPrefixLen)
+				newNodePath, _ := EncodePath(utils.ReverseBits(newNodeKeyCut), newKeyPaddingLen)
+
+				oldNodeKeyCut, _, oldKeyPaddingLen := utils.RemoveFirstNBits(currentRoot.RightNode.Key, commonPrefixLen)
+				oldNodeNewPath, _ := EncodePath(utils.ReverseBits(oldNodeKeyCut), oldKeyPaddingLen)
+				currentRoot.RightNode.Path = oldNodeNewPath
+				currentRoot.RightNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, currentRoot.RightNode.Path, currentRoot.LeftNode.Data)
+
+				if utils.GetBit(currentRoot.RightNode.Key, commonPrefixLen) {
+					// old right node stays right now, new goes left
+					branchNode.RightNode = currentRoot.RightNode
+					branchNode.LeftNode = &Node{
+						Data:      nodeDataCbor,
+						LeftNode:  nil,
+						RightNode: nil,
+						Path:      newNodePath,
+						IsLeaf:    true,
+						Key:       nodeKeyHash,
+						Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, newNodePath, nodeDataCbor),
+					} // the inserted node goes here
+				} else {
+					// old right node goes left, new goes right
+					branchNode.RightNode = &Node{
+						Data:      nodeDataCbor,
+						LeftNode:  nil,
+						RightNode: nil,
+						Path:      newNodePath,
+						IsLeaf:    true,
+						Key:       nodeKeyHash,
+						Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, newNodePath, nodeDataCbor),
+					} // the inserted node goes here
+					branchNode.LeftNode = currentRoot.RightNode
+				}
+				branchNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, branchNode.Path, branchNode.LeftNode.Hash, branchNode.RightNode.Hash)
+				currentRoot.RightNode = branchNode
+				// TODO: recalculate root's hash
+			} else {
+				// right is branch, recurse
+			}
+		}
+	}
+
+	return true, nil
 }
