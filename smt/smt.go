@@ -111,6 +111,8 @@ type Node struct {
 	IsLeaf    bool
 }
 
+// TODO: add methods to safely get LeftNode and RightNode and to calculate Hash
+
 func NewSMT(hashAlgo utils.HashAlgo) *SMT {
 	smt := &SMT{HashAlgo: hashAlgo}
 	smt.Init()
@@ -188,15 +190,21 @@ func (t *SMT) GetRoot() *Node {
 }
 
 func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
-	return t.insert(key, data, t.GetRoot())
+	_, err := t.insert(key, data, t.GetRoot())
+
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
-func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (bool, error) {
+func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) {
 	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
 	nodeDataCbor, err := utils.EncodeCBOR(data)
 
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	goLeft := utils.GetBit(nodeKeyHash, 0)
@@ -345,5 +353,5 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (bool, error) {
 		}
 	}
 
-	return true, nil
+	return currentRoot, nil
 }
