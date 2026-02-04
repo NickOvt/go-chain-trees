@@ -1,6 +1,8 @@
 package smt
 
 import (
+	"bytes"
+
 	"github.com/NickOvt/go-chain-trees/utils"
 )
 
@@ -111,7 +113,42 @@ type Node struct {
 	IsLeaf    bool
 }
 
-// TODO: add methods to safely get LeftNode and RightNode and to calculate Hash
+func (node *Node) GetLeftNode() *Node {
+	if node == nil {
+		return nil
+	}
+	return node.LeftNode
+}
+
+func (node *Node) GetRightNode() *Node {
+	if node == nil {
+		return nil
+	}
+	return node.LeftNode
+}
+
+func (node *Node) GetHash() utils.Hash {
+	if node == nil {
+		return nil
+	}
+	return node.Hash
+}
+
+func (node *Node) CalculateLeafHash(hashAlgo utils.HashAlgo) {
+	if node == nil {
+		return
+	}
+
+	node.Hash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, node.Path, node.Data)
+}
+
+func (node *Node) CalculateBranchHash(hashAlgo utils.HashAlgo) {
+	if node == nil {
+		return
+	}
+
+	node.Hash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, node.Path, node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
+}
 
 func NewSMT(hashAlgo utils.HashAlgo) *SMT {
 	smt := &SMT{HashAlgo: hashAlgo}
@@ -190,7 +227,7 @@ func (t *SMT) GetRoot() *Node {
 }
 
 func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
-	_, err := t.insert(key, data, t.GetRoot())
+	_, err := t.insert(key, data, t.GetRoot(), nil)
 
 	if err != nil {
 		return false, err
@@ -199,7 +236,15 @@ func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
 	return true, nil
 }
 
-func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) {
+func ChooseNewKey(originalKeyHash utils.Hash, newKeyHash utils.Hash) []byte {
+	if newKeyHash == nil || len(newKeyHash) == 0 {
+		return originalKeyHash
+	}
+
+	return newKeyHash
+}
+
+func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newKey utils.Hash) (*Node, error) {
 	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
 	nodeDataCbor, err := utils.EncodeCBOR(data)
 
@@ -207,7 +252,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) 
 		return nil, err
 	}
 
-	goLeft := utils.GetBit(nodeKeyHash, 0)
+	goLeft := utils.GetBit(ChooseNewKey(nodeKeyHash, newKey), 0)
 
 	if goLeft {
 		// check left of current root
@@ -223,13 +268,13 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) 
 				IsLeaf:    true,
 				Key:       nodeKeyHash,
 			}
-			// TODO: recalculate root's hash
+			currentRoot.CalculateBranchHash(t.HashAlgo)
 		} else {
 			// have node at left side
 			if currentRoot.LeftNode.IsLeaf {
 				// left is leaf, create branch
 				// find common prefix of inserted and current leaf on the left
-				commonPrefix, commonPrefixLen, commonPrefixPaddingLen := utils.FindCommonBitPrefix(currentRoot.LeftNode.Key, nodeKeyHash)
+				commonPrefix, commonPrefixLen, commonPrefixPaddingLen := utils.FindCommonBitPrefix(currentRoot.LeftNode.Key, ChooseNewKey(nodeKeyHash, newKey))
 				branchNodePath, _ := EncodePath(utils.ReverseBits(commonPrefix), commonPrefixPaddingLen) // use padding here as we have reversed prefix
 				branchNode := &Node{
 					Data:      nil,
@@ -240,7 +285,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) 
 					Key:       nil,
 				}
 
-				newNodeKeyCut, _, newKeyPaddingLen := utils.RemoveFirstNBits(nodeKeyHash, commonPrefixLen)
+				newNodeKeyCut, _, newKeyPaddingLen := utils.RemoveFirstNBits(ChooseNewKey(nodeKeyHash, newKey), commonPrefixLen)
 				newNodePath, _ := EncodePath(utils.ReverseBits(newNodeKeyCut), newKeyPaddingLen)
 
 				oldNodeKeyCut, _, oldKeyPaddingLen := utils.RemoveFirstNBits(currentRoot.LeftNode.Key, commonPrefixLen)
@@ -273,11 +318,20 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) 
 					} // the inserted node goes here
 					branchNode.LeftNode = currentRoot.LeftNode
 				}
-				branchNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, branchNode.Path, branchNode.LeftNode.Hash, branchNode.RightNode.Hash)
+				branchNode.CalculateBranchHash(t.HashAlgo)
 				currentRoot.LeftNode = branchNode
-				// TODO: recalculate root's hash
+				currentRoot.CalculateBranchHash(t.HashAlgo)
 			} else {
-				// left is branch, recurse
+				// left is branch
+				// 1. find common prefix of inserting node and existing branch node
+				commonPrefix, commonPrefixLen, commonPrefixPaddingLen := utils.FindCommonBitPrefix(currentRoot.LeftNode.Key, nodeKeyHash)
+				// 2. check if path from prefix is equal to branch's path
+				branchNodePath, _ := EncodePath(utils.ReverseBits(commonPrefix), commonPrefixPaddingLen) // use padding here as we have reversed prefix
+				if bytes.Equal(branchNodePath, currentRoot.LeftNode.Path) {
+					// prefix and branch equal, keep this branch, recurse down
+				} else {
+					// branches differ, create new branch and move existing branch to correct side of new branch, then recurse
+				}
 			}
 		}
 	} else {
@@ -294,7 +348,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) 
 				IsLeaf:    true,
 				Key:       nodeKeyHash,
 			}
-			// TODO: recalculate root's hash
+			currentRoot.CalculateBranchHash(t.HashAlgo)
 		} else {
 			// have node at right side
 			if currentRoot.RightNode.IsLeaf {
@@ -344,11 +398,11 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node) (*Node, error) 
 					} // the inserted node goes here
 					branchNode.LeftNode = currentRoot.RightNode
 				}
-				branchNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, branchNode.Path, branchNode.LeftNode.Hash, branchNode.RightNode.Hash)
+				branchNode.CalculateBranchHash(t.HashAlgo)
 				currentRoot.RightNode = branchNode
-				// TODO: recalculate root's hash
+				currentRoot.CalculateBranchHash(t.HashAlgo)
 			} else {
-				// right is branch, recurse
+				// right is branch
 			}
 		}
 	}
