@@ -503,7 +503,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 				oldNodeKeyCut, _, oldKeyPaddingLen := utils.RemoveFirstNBits(rightKey, commonPrefixLen)
 				oldNodeNewPath, _ := EncodePath(utils.ReverseBits(oldNodeKeyCut), oldKeyPaddingLen)
 				currentRoot.RightNode.Path = oldNodeNewPath
-				currentRoot.RightNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, currentRoot.RightNode.Path, currentRoot.LeftNode.Data)
+				currentRoot.RightNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, currentRoot.RightNode.Path, currentRoot.RightNode.Data)
 
 				if utils.GetBit(rightKey, commonPrefixLen) {
 					// old right node stays right now, new goes left
@@ -535,6 +535,79 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 				currentRoot.CalculateBranchHash(t.HashAlgo)
 			} else {
 				// right is branch
+				// 1. find common prefix of inserting node and existing branch node
+				rightKey, rightMeaningfulBits := CalculateKeyFromPath(currentRoot.RightNode.Path)
+				commonPrefix, commonPrefixLen, commonPrefixPaddingLen := utils.FindCommonBitPrefixWithLen(rightKey, rightMeaningfulBits, chosenKey, chosenKeyBitLen)
+				// 2. check if path from prefix is equal to branch's path
+				branchNodePath, _ := EncodePath(utils.ReverseBits(commonPrefix), commonPrefixPaddingLen) // use padding here as we have reversed prefix
+				if bytes.Equal(branchNodePath, currentRoot.RightNode.Path) {
+					// prefix and branch equal, keep this branch, recurse down
+
+					// Remove the common prefix from the key we're inserting
+					newNodeKeyCut, _, newKeyPaddingLen := utils.RemoveFirstNBits(chosenKey, commonPrefixLen)
+					newEncodedPathForRecursion, _ := EncodePath(utils.ReverseBits(newNodeKeyCut), newKeyPaddingLen)
+
+					// Recurse down the right branch with the remaining path
+					_, err = t.insert(key, data, currentRoot.RightNode, newEncodedPathForRecursion)
+					if err != nil {
+						return nil, err
+					}
+
+					// Recalculate hash after recursion
+					currentRoot.CalculateBranchHash(t.HashAlgo)
+				} else {
+					// branches differ, create new branch and move existing branch to correct side of new branch, then recurse
+					newBranchNode := &Node{
+						Data:      nil,
+						LeftNode:  nil,
+						RightNode: nil,
+						Path:      branchNodePath,
+						IsLeaf:    false,
+						Key:       nil,
+					}
+
+					// Calculate remaining paths after common prefix
+					newNodeKeyCut, _, newKeyPaddingLen := utils.RemoveFirstNBits(chosenKey, commonPrefixLen)
+					newNodePath, _ := EncodePath(utils.ReverseBits(newNodeKeyCut), newKeyPaddingLen)
+
+					oldBranchKeyCut, _, oldBranchPaddingLen := utils.RemoveFirstNBits(rightKey, commonPrefixLen)
+					oldBranchNewPath, _ := EncodePath(utils.ReverseBits(oldBranchKeyCut), oldBranchPaddingLen)
+
+					// Update the existing branch's path
+					currentRoot.RightNode.Path = oldBranchNewPath
+					currentRoot.RightNode.CalculateBranchHash(t.HashAlgo)
+
+					// Determine which side each goes on based on the next bit after common prefix
+					if utils.GetBit(rightKey, commonPrefixLen) {
+						// old branch stays right, new node goes left
+						newBranchNode.RightNode = currentRoot.RightNode
+						newBranchNode.LeftNode = &Node{
+							Data:      nodeDataCbor,
+							LeftNode:  nil,
+							RightNode: nil,
+							Path:      newNodePath,
+							IsLeaf:    true,
+							Key:       nodeKeyHash,
+							Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, newNodePath, nodeDataCbor),
+						}
+					} else {
+						// old branch goes left, new node goes right
+						newBranchNode.LeftNode = currentRoot.RightNode
+						newBranchNode.RightNode = &Node{
+							Data:      nodeDataCbor,
+							LeftNode:  nil,
+							RightNode: nil,
+							Path:      newNodePath,
+							IsLeaf:    true,
+							Key:       nodeKeyHash,
+							Hash:      utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, newNodePath, nodeDataCbor),
+						}
+					}
+
+					newBranchNode.CalculateBranchHash(t.HashAlgo)
+					currentRoot.RightNode = newBranchNode
+					currentRoot.CalculateBranchHash(t.HashAlgo)
+				}
 			}
 		}
 	}
