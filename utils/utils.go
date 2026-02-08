@@ -434,3 +434,83 @@ func RemoveFirstNBits(data []byte, n int) ([]byte, int, int) {
 
 	return result, remainingBits, paddingBits
 }
+
+// FindCommonBitPrefixWithLen returns the longest common bit prefix of two byte arrays,
+// considering only the specified number of meaningful bits in each array.
+//
+// This is essential when comparing bit sequences that don't fill complete bytes,
+// as it prevents padding bits from affecting the comparison.
+//
+// Parameters:
+//   - a: First byte array
+//   - aBitLen: Number of meaningful bits in 'a'
+//   - b: Second byte array
+//   - bBitLen: Number of meaningful bits in 'b'
+//
+// Returns:
+//   - []byte: A new byte array containing the common bit prefix
+//   - int: Number of bits in the common prefix
+//   - int: Number of padding bits in the last byte of the result
+func FindCommonBitPrefixWithLen(a []byte, aBitLen int, b []byte, bBitLen int) ([]byte, int, int) {
+	// Only compare up to the shorter of the two meaningful lengths
+	maxBitsToCompare := aBitLen
+	if bBitLen < maxBitsToCompare {
+		maxBitsToCompare = bBitLen
+	}
+
+	if maxBitsToCompare <= 0 {
+		return []byte{}, 0, 0
+	}
+
+	prefixBits := 0
+
+	// Compare byte by byte, but respect the bit length limits
+	maxBytes := (maxBitsToCompare + 7) / 8
+
+	for i := 0; i < maxBytes; i++ {
+		if i >= len(a) || i >= len(b) {
+			break
+		}
+
+		// Calculate how many bits to compare in this byte
+		bitsInThisByte := 8
+		if (i+1)*8 > maxBitsToCompare {
+			bitsInThisByte = maxBitsToCompare - i*8
+		}
+
+		xor := a[i] ^ b[i]
+
+		if xor == 0 && bitsInThisByte == 8 {
+			// All 8 bits in this byte match
+			prefixBits += 8
+		} else {
+			// Find first differing bit
+			matchingBits := bits.LeadingZeros8(xor)
+
+			// Don't count matches beyond what we should compare
+			if matchingBits > bitsInThisByte {
+				matchingBits = bitsInThisByte
+			}
+
+			prefixBits += matchingBits
+			break
+		}
+	}
+
+	// Calculate how many bytes we need
+	prefixBytes := prefixBits / 8
+	remainingBits := prefixBits % 8
+
+	result := make([]byte, prefixBytes)
+	copy(result, a[:prefixBytes])
+
+	paddingBits := 0
+	// If there are remaining bits, add a partial byte
+	if remainingBits > 0 {
+		paddingBits = 8 - remainingBits
+		mask := byte(0xFF << paddingBits)
+		result = append(result, a[prefixBytes]&mask)
+	}
+
+	return result, prefixBits, paddingBits
+}
