@@ -52,6 +52,7 @@ func TestSMT_LeftSubtree_TwoInsertedNodesSamePath(t *testing.T) {
 	if pathBits < 2 {
 		t.Fatalf("expected shared left path length >= 2 bits, got %d", pathBits)
 	}
+	assertNodePathBits(t, left, "000")
 
 	if left.LeftNode == nil || left.RightNode == nil || !left.LeftNode.IsLeaf || !left.RightNode.IsLeaf {
 		t.Fatalf("expected root.LeftNode to have two leaf children")
@@ -60,6 +61,7 @@ func TestSMT_LeftSubtree_TwoInsertedNodesSamePath(t *testing.T) {
 	assertChildSideBit(t, left, false)
 	assertSubtreeIntegrity(t, left)
 	assertLeafHashesMatch(t, left, [][]byte{k1, k2})
+	tree.PrintTree()
 }
 
 func TestSMT_LeftSubtree_ThreeInsertedNodes(t *testing.T) {
@@ -88,12 +90,15 @@ func TestSMT_LeftSubtree_ThreeInsertedNodes(t *testing.T) {
 	if left.LeftNode.IsLeaf || !left.RightNode.IsLeaf {
 		t.Fatalf("expected left child branch and right child leaf after 3 inserts")
 	}
+	assertNodePathBits(t, left, "00")
+	assertNodePathBits(t, left.LeftNode, "0")
 
 	assertSubtreeIntegrity(t, left)
 	if countLeaves(left) != 3 {
 		t.Fatalf("expected 3 leaves in root left subtree, got %d", countLeaves(left))
 	}
 	assertLeafHashesMatch(t, left, [][]byte{k1, k2, k3})
+	tree.PrintTree()
 }
 
 func TestSMT_LeftSubtree_FourInsertedNodes(t *testing.T) {
@@ -123,6 +128,9 @@ func TestSMT_LeftSubtree_FourInsertedNodes(t *testing.T) {
 	if left.LeftNode.IsLeaf || left.RightNode.IsLeaf {
 		t.Fatalf("expected both root.LeftNode children to be branches after 4 inserts")
 	}
+	assertNodePathBits(t, left, "00")
+	assertNodePathBits(t, left.LeftNode, "0")
+	assertNodePathBits(t, left.RightNode, "1")
 
 	for _, b := range []*smt.Node{left.LeftNode, left.RightNode} {
 		if b.LeftNode == nil || b.RightNode == nil || !b.LeftNode.IsLeaf || !b.RightNode.IsLeaf {
@@ -135,6 +143,95 @@ func TestSMT_LeftSubtree_FourInsertedNodes(t *testing.T) {
 		t.Fatalf("expected 4 leaves in root left subtree, got %d", countLeaves(left))
 	}
 	assertLeafHashesMatch(t, left, [][]byte{k1, k2, k3, k4})
+	tree.PrintTree()
+}
+
+func TestSMT_LeftSubtree_FiveInsertedNodes(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256)
+	used := map[string]struct{}{}
+	k1 := findKeyWithHashPrefix(t, "0000", used)
+	k2 := findKeyWithHashPrefix(t, "0001", used)
+	k3 := findKeyWithHashPrefix(t, "0010", used)
+	k4 := findKeyWithHashPrefix(t, "0011", used)
+	k5 := findKeyWithHashPrefix(t, "0100", used)
+
+	insertKeys(t, tree, k1, k2, k3, k4, k5)
+
+	root := tree.GetRoot()
+	assertRootIntegrity(t, root)
+	if root.RightNode != nil {
+		t.Fatalf("expected root.RightNode to stay nil")
+	}
+
+	left := root.LeftNode
+	if left == nil || left.IsLeaf {
+		t.Fatalf("expected root.LeftNode to be a branch")
+	}
+
+	if left.LeftNode == nil || left.RightNode == nil {
+		t.Fatalf("expected root.LeftNode to have both children")
+	}
+	if left.LeftNode.IsLeaf || !left.RightNode.IsLeaf {
+		t.Fatalf("expected root.left.left to be branch and root.left.right to be leaf")
+	}
+	assertNodePathBits(t, left, "0")
+	assertNodePathBits(t, left.LeftNode, "0")
+	assertNodePathBits(t, left.LeftNode.LeftNode, "0")
+
+	//assertNodePathBits(t, left.RightNode, "001")
+	assertNodePathBits(t, left.LeftNode.RightNode, "1")
+
+	assertSubtreeIntegrity(t, left)
+	if countLeaves(left) != 5 {
+		t.Fatalf("expected 5 leaves in root left subtree, got %d", countLeaves(left))
+	}
+	assertLeafHashesMatch(t, left, [][]byte{k1, k2, k3, k4, k5})
+	tree.PrintTree()
+}
+
+func TestSMT_LeftSubtree_TwoInsertedNodes_LongCommonPrefixes(t *testing.T) {
+	testCases := []struct {
+		name             string
+		commonPrefixBits string
+	}{
+		{name: "7_bits", commonPrefixBits: "0110011"},
+		{name: "11_bits", commonPrefixBits: "01011000100"},
+		{name: "12_bits", commonPrefixBits: "010110001001"},
+		{name: "15_bits", commonPrefixBits: "010110001001011"},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tree := smt.NewSMT(utils.SHA256)
+			used := map[string]struct{}{}
+
+			k1 := findKeyWithHashPrefix(t, tc.commonPrefixBits+"0", used)
+			k2 := findKeyWithHashPrefix(t, tc.commonPrefixBits+"1", used)
+
+			insertKeys(t, tree, k1, k2)
+
+			root := tree.GetRoot()
+			assertRootIntegrity(t, root)
+			if root.RightNode != nil {
+				t.Fatalf("expected root.RightNode to stay nil")
+			}
+
+			left := root.LeftNode
+			if left == nil || left.IsLeaf {
+				t.Fatalf("expected root.LeftNode to be a branch")
+			}
+			assertNodePathBits(t, left, tc.commonPrefixBits)
+
+			if left.LeftNode == nil || left.RightNode == nil || !left.LeftNode.IsLeaf || !left.RightNode.IsLeaf {
+				t.Fatalf("expected root.LeftNode to have two leaf children")
+			}
+
+			assertSubtreeIntegrity(t, left)
+			assertLeafHashesMatch(t, left, [][]byte{k1, k2})
+			tree.PrintTree()
+		})
+	}
 }
 
 func insertKeys(t *testing.T, tree *smt.SMT, keys ...[]byte) {
@@ -213,6 +310,31 @@ func assertChildSideBit(t *testing.T, child *smt.Node, wantRight bool) {
 	gotRight := utils.GetBit(keyBits, 0)
 	if gotRight != wantRight {
 		t.Fatalf("child is on wrong side: gotRight=%v, wantRight=%v", gotRight, wantRight)
+	}
+}
+
+func assertNodePathBits(t *testing.T, node *smt.Node, want string) {
+	t.Helper()
+	if node == nil {
+		t.Fatalf("node is nil")
+	}
+
+	keyBits, bitLen := smt.CalculateKeyFromPath(node.Path)
+	if bitLen != len(want) {
+		t.Fatalf("path bit length mismatch: got %d, want %d (bits=%q)", bitLen, len(want), want)
+	}
+
+	got := make([]byte, bitLen)
+	for i := 0; i < bitLen; i++ {
+		if utils.GetBit(keyBits, i) {
+			got[i] = '1'
+		} else {
+			got[i] = '0'
+		}
+	}
+
+	if string(got) != want {
+		t.Fatalf("path bits mismatch: got %q, want %q", string(got), want)
 	}
 }
 
