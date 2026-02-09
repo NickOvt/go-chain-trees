@@ -173,6 +173,7 @@ type SMT struct {
 	Root           *Node
 	emptyHashCache map[int]utils.Hash
 	emptyHash      utils.Hash
+	AppendOnly     bool
 }
 
 type Node struct {
@@ -222,43 +223,10 @@ func (node *Node) CalculateBranchHash(hashAlgo utils.HashAlgo) {
 	node.Hash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, node.Path, node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
 }
 
-func NewSMT(hashAlgo utils.HashAlgo) *SMT {
-	smt := &SMT{HashAlgo: hashAlgo}
+func NewSMT(hashAlgo utils.HashAlgo, appendOnly bool) *SMT {
+	smt := &SMT{HashAlgo: hashAlgo, AppendOnly: appendOnly}
 	smt.Init()
 	return smt
-}
-
-func (t *SMT) GetEmptyHash() utils.Hash {
-	if t.emptyHash == nil {
-		t.emptyHash = utils.GenerateNullHash(t.HashAlgo)
-	}
-	return t.emptyHash
-}
-
-func (t *SMT) GetEmptyHashForLevel(hashAlgo utils.HashAlgo, level int) utils.Hash {
-	if cachedEmptyHash, ok := t.emptyHashCache[level]; ok {
-		return cachedEmptyHash
-	}
-
-	var hash utils.Hash
-	if level == 0 {
-		hash = t.GetEmptyHash()
-	} else {
-		prevHash := t.GetEmptyHashForLevel(hashAlgo, level-1)
-		hash = utils.ConcatHashesAndGenerateHash(hashAlgo, prevHash, prevHash)
-	}
-
-	t.emptyHashCache[level] = hash
-	return hash
-}
-
-func (t *SMT) BuildHashCache(hashAlgo utils.HashAlgo) {
-	hashAlgoBitCount := utils.GetHashAlgoOutputBitCount(hashAlgo)
-
-	// Calculate and fill hash
-	for level := range hashAlgoBitCount {
-		t.GetEmptyHashForLevel(hashAlgo, level)
-	}
 }
 
 func (t *SMT) Init() {
@@ -278,8 +246,6 @@ func (t *SMT) Init() {
 	t.Root = rootNode
 
 	t.emptyHashCache = make(map[int]utils.Hash)
-
-	t.BuildHashCache(t.HashAlgo)
 }
 
 func (t *SMT) GetRoot() *Node {
@@ -299,7 +265,7 @@ func (t *SMT) GetRoot() *Node {
 }
 
 func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
-	_, err := t.insert(key, data, t.GetRoot(), nil)
+	_, err := t.insert(key, data, t.GetRoot(), nil, t.AppendOnly)
 
 	if err != nil {
 		return false, err
@@ -471,7 +437,7 @@ func removeFirstNBitsWithLen(data []byte, bitLen int, n int) ([]byte, int) {
 	return result, remainingBits
 }
 
-func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath []byte) (*Node, error) {
+func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath []byte, appendOnly bool) (*Node, error) {
 	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
 	nodeDataCbor, err := utils.EncodeCBOR(data)
 
@@ -508,6 +474,16 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 		} else {
 			// have node at left side
 			if currentRoot.LeftNode.IsLeaf {
+				if bytes.Equal(currentRoot.LeftNode.Key, nodeKeyHash) {
+					if appendOnly {
+						return nil, fmt.Errorf("duplicate key insert in append-only mode")
+					}
+					currentRoot.LeftNode.Data = nodeDataCbor
+					currentRoot.LeftNode.CalculateLeafHash(t.HashAlgo)
+					currentRoot.CalculateBranchHash(t.HashAlgo)
+					return currentRoot, nil
+				}
+
 				// left is leaf, create branch
 				// find common prefix of inserted and current leaf on the left
 				leftKey, leftMeaningfulBits := CalculateKeyFromPath(currentRoot.LeftNode.Path)
@@ -573,7 +549,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					newEncodedPathForRecursion := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
 					// Recurse down the left branch with the remaining path
-					_, err = t.insert(key, data, currentRoot.LeftNode, newEncodedPathForRecursion)
+					_, err = t.insert(key, data, currentRoot.LeftNode, newEncodedPathForRecursion, appendOnly)
 					if err != nil {
 						return nil, err
 					}
@@ -660,6 +636,16 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 		} else {
 			// have node at right side
 			if currentRoot.RightNode.IsLeaf {
+				if bytes.Equal(currentRoot.RightNode.Key, nodeKeyHash) {
+					if appendOnly {
+						return nil, fmt.Errorf("duplicate key insert in append-only mode")
+					}
+					currentRoot.RightNode.Data = nodeDataCbor
+					currentRoot.RightNode.CalculateLeafHash(t.HashAlgo)
+					currentRoot.CalculateBranchHash(t.HashAlgo)
+					return currentRoot, nil
+				}
+
 				// right is leaf, create branch
 				// find common prefix of inserted and current leaf on the right
 				rightKey, rightMeaningfulBits := CalculateKeyFromPath(currentRoot.RightNode.Path)
@@ -725,7 +711,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					newEncodedPathForRecursion := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
 					// Recurse down the right branch with the remaining path
-					_, err = t.insert(key, data, currentRoot.RightNode, newEncodedPathForRecursion)
+					_, err = t.insert(key, data, currentRoot.RightNode, newEncodedPathForRecursion, appendOnly)
 					if err != nil {
 						return nil, err
 					}

@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/NickOvt/go-chain-trees/smt"
@@ -8,7 +9,7 @@ import (
 )
 
 func TestSMT_RightSubtree_OneInsertedNode(t *testing.T) {
-	tree := smt.NewSMT(utils.SHA256)
+	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 	k1 := findKeyWithHashPrefix(t, "1", used)
 
@@ -29,7 +30,7 @@ func TestSMT_RightSubtree_OneInsertedNode(t *testing.T) {
 }
 
 func TestSMT_RightSubtree_TwoInsertedNodesSamePath(t *testing.T) {
-	tree := smt.NewSMT(utils.SHA256)
+	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 	k1 := findKeyWithHashPrefix(t, "1110", used)
 	k2 := findKeyWithHashPrefix(t, "1111", used)
@@ -64,7 +65,7 @@ func TestSMT_RightSubtree_TwoInsertedNodesSamePath(t *testing.T) {
 }
 
 func TestSMT_RightSubtree_ThreeInsertedNodes(t *testing.T) {
-	tree := smt.NewSMT(utils.SHA256)
+	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 	k1 := findKeyWithHashPrefix(t, "1110", used)
 	k2 := findKeyWithHashPrefix(t, "1111", used)
@@ -101,7 +102,7 @@ func TestSMT_RightSubtree_ThreeInsertedNodes(t *testing.T) {
 }
 
 func TestSMT_RightSubtree_FourInsertedNodes(t *testing.T) {
-	tree := smt.NewSMT(utils.SHA256)
+	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 	k1 := findKeyWithHashPrefix(t, "1100", used)
 	k2 := findKeyWithHashPrefix(t, "1101", used)
@@ -146,7 +147,7 @@ func TestSMT_RightSubtree_FourInsertedNodes(t *testing.T) {
 }
 
 func TestSMT_RightSubtree_FiveInsertedNodes(t *testing.T) {
-	tree := smt.NewSMT(utils.SHA256)
+	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 	k1 := findKeyWithHashPrefix(t, "1111", used)
 	k2 := findKeyWithHashPrefix(t, "1110", used)
@@ -200,7 +201,7 @@ func TestSMT_RightSubtree_TwoInsertedNodes_LongCommonPrefixes(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			tree := smt.NewSMT(utils.SHA256)
+			tree := smt.NewSMT(utils.SHA256, true)
 			used := map[string]struct{}{}
 
 			k1 := findKeyWithHashPrefix(t, tc.commonPrefixBits+"0", used)
@@ -229,4 +230,71 @@ func TestSMT_RightSubtree_TwoInsertedNodes_LongCommonPrefixes(t *testing.T) {
 			tree.PrintTree()
 		})
 	}
+}
+
+func TestSMT_RightSubtree_DuplicateInsert_AppendOnlyFalse_UpdatesNodeAndHashes(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, false)
+	used := map[string]struct{}{}
+	k1 := findKeyWithHashPrefix(t, "1110", used)
+	k2 := findKeyWithHashPrefix(t, "1111", used)
+
+	if ok, err := tree.Insert(k1, []byte("value-right-initial")); err != nil || !ok {
+		t.Fatalf("initial insert for k1 failed: ok=%v err=%v", ok, err)
+	}
+	if ok, err := tree.Insert(k2, []byte("value-right-other")); err != nil || !ok {
+		t.Fatalf("initial insert for k2 failed: ok=%v err=%v", ok, err)
+	}
+
+	rightBefore := cloneBytes(tree.GetRoot().RightNode.Hash)
+
+	k1Hash := utils.GenerateHash(tree.HashAlgo, k1)
+	leafBefore := findLeafByKeyHash(tree.GetRoot().RightNode, k1Hash)
+	if leafBefore == nil {
+		t.Fatalf("failed to find inserted leaf for k1 before duplicate insert")
+	}
+	leafHashBefore := cloneBytes(leafBefore.Hash)
+
+	updatedValue := []byte("value-right-updated")
+	if ok, err := tree.Insert(k1, updatedValue); err != nil || !ok {
+		t.Fatalf("duplicate insert with appendOnly=false failed: ok=%v err=%v", ok, err)
+	}
+
+	root := tree.GetRoot()
+	assertRootIntegrity(t, root)
+	if root.LeftNode != nil {
+		t.Fatalf("expected root.LeftNode to remain nil")
+	}
+	if root.RightNode == nil || root.RightNode.IsLeaf {
+		t.Fatalf("expected root.RightNode to remain a branch")
+	}
+	if countLeaves(root.RightNode) != 2 {
+		t.Fatalf("expected duplicate insert not to create a new leaf")
+	}
+
+	leafAfter := findLeafByKeyHash(root.RightNode, k1Hash)
+	if leafAfter == nil {
+		t.Fatalf("failed to find updated leaf for k1 after duplicate insert")
+	}
+
+	updatedValueCBOR, err := utils.EncodeCBOR(updatedValue)
+	if err != nil {
+		t.Fatalf("failed to encode expected CBOR data: %v", err)
+	}
+	if !bytes.Equal([]byte(leafAfter.Data), []byte(updatedValueCBOR)) {
+		t.Fatalf("leaf data was not updated on duplicate insert")
+	}
+
+	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path, updatedValueCBOR)
+	if !bytes.Equal([]byte(leafAfter.Hash), []byte(expectedLeafHash)) {
+		t.Fatalf("updated leaf hash mismatch")
+	}
+	if bytes.Equal(leafHashBefore, []byte(leafAfter.Hash)) {
+		t.Fatalf("expected updated leaf hash to change after duplicate insert")
+	}
+	if bytes.Equal(rightBefore, []byte(root.RightNode.Hash)) {
+		t.Fatalf("expected right subtree hash to change after duplicate insert update")
+	}
+	assertSubtreeIntegrity(t, root.RightNode)
+	assertLeafHashesMatch(t, root.RightNode, [][]byte{k1, k2})
+	assertHashesConsistentWithTreeImplementation(t, root, tree.HashAlgo)
 }
