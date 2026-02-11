@@ -276,14 +276,14 @@ func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
 
 // PrintTree writes a visual representation of the SMT to stdout.
 // Branch nodes display their decoded raw path bitstrings, while leaf nodes
-// display their hashes.
+// display their hashes (and paths too).
 func (t *SMT) PrintTree() {
 	t.WriteTree(os.Stdout)
 }
 
 // WriteTree writes a visual representation of the SMT to the provided writer.
 // Branch nodes display their decoded raw path bitstrings, while leaf nodes
-// display their hashes.
+// display their hashes (and paths too).
 func (t *SMT) WriteTree(w io.Writer) {
 	if w == nil {
 		return
@@ -414,29 +414,6 @@ func ChooseNewKey(originalKeyHash utils.Hash, newEncodedPath []byte) ([]byte, in
 	return CalculateKeyFromPath(newEncodedPath)
 }
 
-// removeFirstNBitsWithLen removes the first n meaningful bits from a bitstring.
-// Unlike utils.RemoveFirstNBits, it respects bitLen and ignores right-side byte padding.
-func removeFirstNBitsWithLen(data []byte, bitLen int, n int) ([]byte, int) {
-	if bitLen <= 0 || n >= bitLen {
-		return []byte{}, 0
-	}
-
-	if n < 0 {
-		n = 0
-	}
-
-	remainingBits := bitLen - n
-	result := make([]byte, (remainingBits+7)/8)
-
-	for i := 0; i < remainingBits; i++ {
-		if utils.GetBit(data, n+i) {
-			result[i/8] |= 1 << (7 - (i % 8))
-		}
-	}
-
-	return result, remainingBits
-}
-
 func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath []byte, appendOnly bool) (*Node, error) {
 	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
 	nodeDataCbor, err := utils.EncodeCBOR(data)
@@ -498,10 +475,10 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					Key:       nil,
 				}
 
-				newNodeKeyCut, newNodeKeyBitLen := removeFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
+				newNodeKeyCut, newNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
 				newNodePath := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
-				oldNodeKeyCut, oldNodeKeyBitLen := removeFirstNBitsWithLen(leftKey, leftMeaningfulBits, commonPrefixLen)
+				oldNodeKeyCut, oldNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(leftKey, leftMeaningfulBits, commonPrefixLen)
 				oldNodeNewPath := EncodeKeyBitsAsPath(oldNodeKeyCut, oldNodeKeyBitLen)
 				currentRoot.LeftNode.Path = oldNodeNewPath
 				currentRoot.LeftNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, currentRoot.LeftNode.Path, currentRoot.LeftNode.Data)
@@ -545,7 +522,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					// prefix and branch equal, keep this branch, recurse down
 
 					// Remove the common prefix from the key we're inserting
-					newNodeKeyCut, newNodeKeyBitLen := removeFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
+					newNodeKeyCut, newNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
 					newEncodedPathForRecursion := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
 					// Recurse down the left branch with the remaining path
@@ -568,10 +545,10 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					}
 
 					// Calculate remaining paths after common prefix
-					newNodeKeyCut, newNodeKeyBitLen := removeFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
+					newNodeKeyCut, newNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
 					newNodePath := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
-					oldBranchKeyCut, oldBranchKeyBitLen := removeFirstNBitsWithLen(leftKey, leftMeaningfulBits, commonPrefixLen)
+					oldBranchKeyCut, oldBranchKeyBitLen := utils.RemoveFirstNBitsWithLen(leftKey, leftMeaningfulBits, commonPrefixLen)
 					oldBranchNewPath := EncodeKeyBitsAsPath(oldBranchKeyCut, oldBranchKeyBitLen)
 
 					// Update the existing branch's path
@@ -660,10 +637,10 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					Key:       nil,
 				}
 
-				newNodeKeyCut, newNodeKeyBitLen := removeFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
+				newNodeKeyCut, newNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
 				newNodePath := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
-				oldNodeKeyCut, oldNodeKeyBitLen := removeFirstNBitsWithLen(rightKey, rightMeaningfulBits, commonPrefixLen)
+				oldNodeKeyCut, oldNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(rightKey, rightMeaningfulBits, commonPrefixLen)
 				oldNodeNewPath := EncodeKeyBitsAsPath(oldNodeKeyCut, oldNodeKeyBitLen)
 				currentRoot.RightNode.Path = oldNodeNewPath
 				currentRoot.RightNode.Hash = utils.ConcatDataAndGenerateCombinedHash(t.HashAlgo, currentRoot.RightNode.Path, currentRoot.RightNode.Data)
@@ -707,7 +684,7 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					// prefix and branch equal, keep this branch, recurse down
 
 					// Remove the common prefix from the key we're inserting
-					newNodeKeyCut, newNodeKeyBitLen := removeFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
+					newNodeKeyCut, newNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
 					newEncodedPathForRecursion := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
 					// Recurse down the right branch with the remaining path
@@ -730,10 +707,10 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 					}
 
 					// Calculate remaining paths after common prefix
-					newNodeKeyCut, newNodeKeyBitLen := removeFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
+					newNodeKeyCut, newNodeKeyBitLen := utils.RemoveFirstNBitsWithLen(chosenKey, chosenKeyBitLen, commonPrefixLen)
 					newNodePath := EncodeKeyBitsAsPath(newNodeKeyCut, newNodeKeyBitLen)
 
-					oldBranchKeyCut, oldBranchKeyBitLen := removeFirstNBitsWithLen(rightKey, rightMeaningfulBits, commonPrefixLen)
+					oldBranchKeyCut, oldBranchKeyBitLen := utils.RemoveFirstNBitsWithLen(rightKey, rightMeaningfulBits, commonPrefixLen)
 					oldBranchNewPath := EncodeKeyBitsAsPath(oldBranchKeyCut, oldBranchKeyBitLen)
 
 					// Update the existing branch's path

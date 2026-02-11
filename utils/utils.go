@@ -514,3 +514,26 @@ func FindCommonBitPrefixWithLen(a []byte, aBitLen int, b []byte, bBitLen int) ([
 
 	return result, prefixBits, paddingBits
 }
+
+// RemoveFirstNBitsWithLen removes the first n meaningful bits from a bitstring.
+// Unlike utils.RemoveFirstNBits, it respects bitLen and ignores right-side byte padding.
+func RemoveFirstNBitsWithLen(data []byte, bitLen int, n int) ([]byte, int) {
+	if bitLen <= 0 || n >= bitLen {
+		return []byte{}, 0
+	}
+
+	if n < 0 {
+		n = 0
+	}
+
+	remainingBits := bitLen - n
+	result := make([]byte, (remainingBits+7)/8)
+
+	for i := 0; i < remainingBits; i++ {
+		if GetBit(data, n+i) {
+			result[i/8] |= 1 << (7 - (i % 8))
+		}
+	}
+
+	return result, remainingBits
+}
