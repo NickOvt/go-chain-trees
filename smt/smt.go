@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/NickOvt/go-chain-trees/utils"
@@ -184,6 +185,17 @@ type Node struct {
 	LeftNode  *Node          // For branch nodes
 	RightNode *Node          // For branch nodes
 	IsLeaf    bool
+}
+
+type ProofNode struct {
+	Path []byte
+	Hash utils.Hash
+	Data []byte
+}
+
+type InclusionExclusionProof struct {
+	Root utils.Hash
+	Path []*ProofNode
 }
 
 func (node *Node) GetLeftNode() *Node {
@@ -753,4 +765,103 @@ func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newEncodedPath 
 	}
 
 	return currentRoot, nil
+}
+
+func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionProof, error) {
+	proof := &InclusionExclusionProof{
+		Path: []*ProofNode{},
+		Root: t.Root.GetHash(),
+	}
+
+	rootNode := t.GetRoot()
+
+	if rootNode.LeftNode == nil && rootNode.RightNode == nil {
+		return nil, fmt.Errorf("Cannot generate inclusion proof for an empty tree")
+	}
+
+	keyBitSize := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
+	i := 0
+
+	currNode := rootNode
+	pathMismatch := false
+	for i < keyBitSize && currNode != nil && !currNode.IsLeaf {
+		keyAtDepth, keyAtDepthBitLen := utils.RemoveFirstNBitsWithLen(key, keyBitSize, i)
+		if keyAtDepthBitLen <= 0 {
+			break
+		}
+
+		goLeft := !utils.GetBit(keyAtDepth, 0)
+
+		proofNode := &ProofNode{
+			Path: currNode.Path,
+			Data: nil,
+		}
+
+		var nextNode *Node
+
+		if goLeft {
+			// go left
+			if currNode.RightNode != nil {
+				proofNode.Hash = currNode.RightNode.GetHash()
+			}
+			nextNode = currNode.LeftNode
+		} else {
+			// go right
+			if currNode.LeftNode != nil {
+				proofNode.Hash = currNode.LeftNode.GetHash()
+			}
+			nextNode = currNode.RightNode
+		}
+
+		// add sibling witness for this branch decision
+		proof.Path = append(proof.Path, proofNode)
+
+		// desired child does not exist -> exclusion proof
+		if nextNode == nil {
+			currNode = nil
+			break
+		}
+
+		keyFromPath, meaningfulBitsOfKeyFromPath := CalculateKeyFromPath(nextNode.Path)
+		commonPrefix, commonPrefixLen, _ := utils.FindCommonBitPrefixWithLen(
+			keyFromPath,
+			meaningfulBitsOfKeyFromPath,
+			keyAtDepth,
+			keyAtDepthBitLen,
+		)
+		encodedCommonPrefix := EncodeKeyBitsAsPath(commonPrefix, commonPrefixLen)
+		i += commonPrefixLen
+
+		currNode = nextNode
+
+		// path mismatch inside compressed path -> exclusion proof
+		if !bytes.Equal(encodedCommonPrefix, currNode.Path) {
+			pathMismatch = true
+			break
+		}
+	}
+
+	// terminal witness:
+	// - inclusion: matched leaf (Path + Data)
+	// - exclusion at leaf: nearest existing leaf (Path + Data)
+	// - exclusion at branch mismatch/end: branch (Path + Hash)
+	if currNode != nil {
+		if currNode.IsLeaf {
+			proof.Path = append(proof.Path, &ProofNode{
+				Path: currNode.Path,
+				Hash: nil,
+				Data: currNode.Data,
+			})
+		} else if pathMismatch || i >= keyBitSize {
+			proof.Path = append(proof.Path, &ProofNode{
+				Path: currNode.Path,
+				Hash: currNode.Hash,
+				Data: nil,
+			})
+		}
+	}
+
+	slices.Reverse(proof.Path)
+
+	return proof, nil
 }
