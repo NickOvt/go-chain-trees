@@ -209,7 +209,7 @@ func (node *Node) GetRightNode() *Node {
 	if node == nil {
 		return nil
 	}
-	return node.LeftNode
+	return node.RightNode
 }
 
 func (node *Node) GetHash() utils.Hash {
