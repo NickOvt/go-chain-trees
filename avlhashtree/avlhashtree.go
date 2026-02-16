@@ -556,8 +556,6 @@ type CryptographicProof struct {
 	HashAlgo  utils.HashAlgo
 }
 
-// TODO: Return Proof as CBOR bytes
-
 func (t *AVLHashTree) GenerateInclusionExclusionProof(key utils.CBORData) (*CryptographicProof, error) {
 	if t.Root == nil {
 		return &CryptographicProof{
