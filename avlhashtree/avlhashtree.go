@@ -556,8 +556,6 @@ type CryptographicProof struct {
 	HashAlgo  utils.HashAlgo
 }
 
-// TODO: Return Proof as CBOR bytes
-
 func (t *AVLHashTree) GenerateInclusionExclusionProof(key utils.CBORData) (*CryptographicProof, error) {
 	if t.Root == nil {
 		return &CryptographicProof{
@@ -605,10 +603,10 @@ func (t *AVLHashTree) generateInclusionExclusionProofRecursive(node *Node, targe
 	if cmp < 0 {
 		// Go left
 		return t.generateInclusionExclusionProofRecursive(node.LeftChild, targetKey, "left", proof)
-	} else {
-		// Go right
-		return t.generateInclusionExclusionProofRecursive(node.RightChild, targetKey, "right", proof)
 	}
+
+	// Go right
+	return t.generateInclusionExclusionProofRecursive(node.RightChild, targetKey, "right", proof)
 }
 
 type PublicCryptographicProof struct {
@@ -678,8 +676,15 @@ func (proof *CryptographicProof) ToPublicProof() *PublicCryptographicProof {
 }
 
 func (t *AVLHashTree) VerifyPublicProof(proof *PublicCryptographicProof) (bool, error) {
+	if proof == nil {
+		return false, nil
+	}
 
-	if len(proof.Path) == 0 || proof.RootHash == nil || !proof.Found {
+	if len(proof.Path) == 0 {
+		return proof.RootHash == nil && !proof.Found, nil
+	}
+
+	if proof.RootHash == nil {
 		return false, nil
 	}
 
