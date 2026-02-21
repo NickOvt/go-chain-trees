@@ -135,6 +135,154 @@ func TestSMT_GenerateInclusionExclusionProof_EmptyTree_ReturnsError(t *testing.T
 	}
 }
 
+func TestSMT_InclusionExclusionProof_ToPublicProof_ReturnsRootAndPathTuples(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	publicProof := proof.ToPublicProof()
+	if publicProof == nil {
+		t.Fatalf("expected public proof, got nil")
+	}
+	if !bytes.Equal(publicProof.Root, proof.Root) {
+		t.Fatalf("public proof root mismatch")
+	}
+	if len(publicProof.Path) != len(proof.Path) {
+		t.Fatalf("public proof path length mismatch")
+	}
+	if len(publicProof.Path) == 0 {
+		t.Fatalf("expected non-empty public proof path")
+	}
+
+	if !bytes.Equal(publicProof.Path[0][0], proof.Path[0].Path) {
+		t.Fatalf("public proof tuple[0] path mismatch")
+	}
+	if !bytes.Equal(publicProof.Path[0][1], proof.Path[0].Data) {
+		t.Fatalf("public proof tuple[0] should contain leaf data")
+	}
+
+	for i := 1; i < len(publicProof.Path); i++ {
+		if !bytes.Equal(publicProof.Path[i][0], proof.Path[i].Path) {
+			t.Fatalf("public proof tuple[%d] path mismatch", i)
+		}
+		if !bytes.Equal(publicProof.Path[i][1], proof.Path[i].Hash) {
+			t.Fatalf("public proof tuple[%d] should contain hash witness", i)
+		}
+	}
+}
+
+func TestSMT_InclusionExclusionProof_ToPublicProof_NilReceiver(t *testing.T) {
+	var proof *smt.InclusionExclusionProof
+	if proof.ToPublicProof() != nil {
+		t.Fatalf("expected nil public proof for nil receiver")
+	}
+}
+
+func TestSMT_VerifyProof_Inclusion(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	valid, err := tree.VerifyProof(proof)
+	if err != nil {
+		t.Fatalf("VerifyProof returned error: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected valid inclusion proof")
+	}
+}
+
+func TestSMT_VerifyPublicProof_Inclusion(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	valid, err := tree.VerifyPublicProof(proof.ToPublicProof())
+	if err != nil {
+		t.Fatalf("VerifyPublicProof returned error: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected valid public inclusion proof")
+	}
+}
+
+func TestSMT_VerifyPublicProof_ExclusionMissingRootChild(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	existingKey := findKeyWithHashPrefix(t, "0", used)
+	insertKeys(t, tree, existingKey)
+
+	missingKey := findKeyWithHashPrefix(t, "1", used)
+	missingKeyHash := utils.GenerateHash(tree.HashAlgo, missingKey)
+
+	proof, err := tree.GenerateInclusionExclusionProof(missingKeyHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	valid, err := tree.VerifyPublicProof(proof.ToPublicProof())
+	if err == nil {
+		t.Fatalf("expected error for exclusion proof represented in simplified public format")
+	}
+	if valid {
+		t.Fatalf("expected simplified public exclusion proof to be invalid")
+	}
+}
+
+func TestSMT_VerifyPublicProof_TamperedRoot(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	publicProof := proof.ToPublicProof()
+	publicProof.Root = utils.GenerateHash(tree.HashAlgo, []byte("tampered-root"))
+
+	valid, err := tree.VerifyPublicProof(publicProof)
+	if err == nil {
+		t.Fatalf("expected error for tampered public proof root")
+	}
+	if valid {
+		t.Fatalf("expected tampered public proof to be invalid")
+	}
+}
+
 func recomputeRootFromProofBySpec(t *testing.T, hashAlgo utils.HashAlgo, proof *smt.InclusionExclusionProof) []byte {
 	t.Helper()
 

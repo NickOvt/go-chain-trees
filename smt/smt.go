@@ -198,6 +198,136 @@ type InclusionExclusionProof struct {
 	Path []*ProofNode
 }
 
+type PublicInclusionExclusionProof struct {
+	Root utils.Hash  `cbor:"1,keyasint" json:"root"`
+	Path [][2][]byte `cbor:"2,keyasint" json:"path"`
+}
+
+func (proof *InclusionExclusionProof) ToPublicProof() *PublicInclusionExclusionProof {
+	if proof == nil {
+		return nil
+	}
+
+	path := make([][2][]byte, len(proof.Path))
+	for i, proofNode := range proof.Path {
+		if proofNode == nil {
+			continue
+		}
+
+		path[i][0] = slices.Clone(proofNode.Path)
+		if len(proofNode.Data) > 0 {
+			path[i][1] = slices.Clone(proofNode.Data)
+		} else {
+			path[i][1] = slices.Clone(proofNode.Hash)
+		}
+	}
+
+	return &PublicInclusionExclusionProof{
+		Root: slices.Clone(proof.Root),
+		Path: path,
+	}
+}
+
+func (proof *PublicInclusionExclusionProof) ToInternalProof() *InclusionExclusionProof {
+	if proof == nil {
+		return nil
+	}
+
+	path := make([]*ProofNode, len(proof.Path))
+	for i, tuple := range proof.Path {
+		proofNode := &ProofNode{
+			Path: slices.Clone(tuple[0]),
+			Hash: nil,
+			Data: nil,
+		}
+
+		if i == 0 {
+			proofNode.Data = slices.Clone(tuple[1])
+		} else {
+			proofNode.Hash = slices.Clone(tuple[1])
+		}
+
+		path[i] = proofNode
+	}
+
+	return &InclusionExclusionProof{
+		Root: slices.Clone(proof.Root),
+		Path: path,
+	}
+}
+
+func (t *SMT) VerifyPublicProof(proof *PublicInclusionExclusionProof) (bool, error) {
+	return t.VerifyProof(proof.ToInternalProof())
+}
+
+func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
+	if proof == nil {
+		return false, nil
+	}
+
+	if len(proof.Path) == 0 {
+		return false, fmt.Errorf("proof path is empty")
+	}
+	if len(proof.Path) < 2 {
+		return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
+	}
+
+	if !bytes.Equal(proof.Root, t.GetRoot().GetHash()) {
+		return false, fmt.Errorf("given proof document contains invalid root hash")
+	}
+
+	recomputedRoot, err := recomputeRootFromProofBySpec(t.HashAlgo, proof)
+	if err != nil {
+		return false, err
+	}
+
+	if bytes.Equal(recomputedRoot, proof.Root) {
+		return true, nil
+	}
+
+	return false, fmt.Errorf("calculated root hash does not match provided root hash")
+}
+
+func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclusionProof) (utils.Hash, error) {
+	if proof == nil || len(proof.Path) == 0 {
+		return nil, fmt.Errorf("cannot recompute root from empty proof")
+	}
+	if len(proof.Path[0].Data) == 0 {
+		return nil, fmt.Errorf("first proof node must contain leaf data for inclusion verification")
+	}
+
+	currentHash := utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[0].Path, proof.Path[0].Data)
+
+	for i := 1; i < len(proof.Path); i++ {
+		if proof.Path[i] == nil {
+			return nil, fmt.Errorf("proof contains nil node at index %d", i)
+		}
+
+		rightmostBit, ok := rightmostEncodedPathBit(proof.Path[i-1].Path)
+		if !ok {
+			return nil, fmt.Errorf("proof path[%d] has no meaningful bits", i-1)
+		}
+
+		if rightmostBit {
+			currentHash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
+		} else {
+			currentHash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
+		}
+	}
+
+	return currentHash, nil
+}
+
+func rightmostEncodedPathBit(encodedPath []byte) (bool, bool) {
+	decodedPath, trailingPadding := DecodePath(encodedPath)
+	meaningfulBits := len(decodedPath)*8 - trailingPadding
+	if meaningfulBits <= 0 {
+		return false, false
+	}
+
+	return utils.GetBit(decodedPath, meaningfulBits-1), true
+}
+
 func (node *Node) GetLeftNode() *Node {
 	if node == nil {
 		return nil
