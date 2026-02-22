@@ -45,7 +45,7 @@ func TestSMT_GenerateInclusionExclusionProof_Inclusion_LeafToRootOrderAndHashCha
 	if leaf == nil {
 		t.Fatalf("failed to find target leaf in tree")
 	}
-	if !bytes.Equal(first.Path, leaf.Path) {
+	if !bytes.Equal(first.Path, leaf.Path.Encode()) {
 		t.Fatalf("first proof node path does not match target leaf path")
 	}
 	if !bytes.Equal(first.Data, leaf.Data) {
@@ -318,5 +318,5 @@ func rightmostPathBit(encodedPath []byte) (bool, bool) {
 		return false, false
 	}
 
-	return utils.GetBit(decodedPath, meaningfulBits-1), true
+	return utils.GetBit(decodedPath, 0), true
 }

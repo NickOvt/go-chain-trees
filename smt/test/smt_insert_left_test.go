@@ -49,7 +49,7 @@ func TestSMT_LeftSubtree_TwoInsertedNodesSamePath(t *testing.T) {
 		t.Fatalf("expected root.LeftNode to be a branch after two inserts")
 	}
 
-	_, pathBits := smt.CalculateKeyFromPath(left.Path)
+	_, pathBits := left.Path.KeyBits()
 	if pathBits < 2 {
 		t.Fatalf("expected shared left path length >= 2 bits, got %d", pathBits)
 	}
@@ -288,7 +288,7 @@ func TestSMT_LeftSubtree_DuplicateInsert_AppendOnlyFalse_UpdatesNodeAndHashes(t 
 		t.Fatalf("leaf data was not updated on duplicate insert")
 	}
 
-	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path, updatedValueCBOR)
+	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
 	if !bytes.Equal([]byte(leafAfter.Hash), []byte(expectedLeafHash)) {
 		t.Fatalf("updated leaf hash mismatch")
 	}
@@ -349,10 +349,10 @@ func assertSubtreeIntegrity(t *testing.T, node *smt.Node) {
 		if len(node.Key) == 0 {
 			t.Fatalf("leaf key is empty")
 		}
-		if len(node.Path) == 0 {
+		if node.Path == nil || node.Path.BitLen() == 0 {
 			t.Fatalf("leaf path is empty")
 		}
-		_, bits := smt.CalculateKeyFromPath(node.Path)
+		_, bits := node.Path.KeyBits()
 		if bits <= 0 {
 			t.Fatalf("leaf path has no meaningful bits")
 		}
@@ -375,7 +375,7 @@ func assertChildSideBit(t *testing.T, child *smt.Node, wantRight bool) {
 		t.Fatalf("child is nil")
 	}
 
-	keyBits, bitLen := smt.CalculateKeyFromPath(child.Path)
+	keyBits, bitLen := child.Path.KeyBits()
 	if bitLen <= 0 {
 		t.Fatalf("child path has no meaningful bits")
 	}
@@ -392,7 +392,7 @@ func assertNodePathBits(t *testing.T, node *smt.Node, want string) {
 		t.Fatalf("node is nil")
 	}
 
-	keyBits, bitLen := smt.CalculateKeyFromPath(node.Path)
+	keyBits, bitLen := node.Path.KeyBits()
 	if bitLen != len(want) {
 		t.Fatalf("path bit length mismatch: got %d, want %d (bits=%q)", bitLen, len(want), want)
 	}
@@ -478,11 +478,27 @@ func findKeyWithHashPrefix(t *testing.T, prefix string, used map[string]struct{}
 func hasBitPrefix(hash []byte, prefix string) bool {
 	for i, ch := range prefix {
 		want := ch == '1'
-		if utils.GetBit(hash, i) != want {
+		if getBitFromLSB(hash, i) != want {
 			return false
 		}
 	}
 	return true
+}
+
+func getBitFromLSB(data []byte, i int) bool {
+	if i < 0 {
+		return false
+	}
+
+	byteOffset := i / 8
+	if byteOffset >= len(data) {
+		return false
+	}
+
+	byteIdx := len(data) - 1 - byteOffset
+	bitIdx := i % 8
+
+	return (data[byteIdx] & (1 << bitIdx)) != 0
 }
 
 func cloneBytes(data []byte) []byte {
@@ -519,7 +535,7 @@ func assertHashesConsistentWithTreeImplementation(t *testing.T, node *smt.Node, 
 	}
 
 	if node.IsLeaf {
-		expected := utils.ConcatDataAndGenerateCombinedHash(hashAlgo, node.Path, node.Data)
+		expected := utils.ConcatDataAndGenerateCombinedHash(hashAlgo, node.Path.Encode(), node.Data)
 		if !bytes.Equal([]byte(node.Hash), []byte(expected)) {
 			t.Fatalf("leaf hash mismatch for node key %x", []byte(node.Key))
 		}
@@ -531,12 +547,12 @@ func assertHashesConsistentWithTreeImplementation(t *testing.T, node *smt.Node, 
 
 	expected := utils.ConcatDataAndGenerateCombinedHash(
 		hashAlgo,
-		node.Path,
+		node.Path.Encode(),
 		node.GetLeftNode().GetHash(),
 		node.GetRightNode().GetHash(),
 	)
 
 	if !bytes.Equal([]byte(node.Hash), []byte(expected)) {
-		t.Fatalf("branch hash mismatch for path %x", node.Path)
+		t.Fatalf("branch hash mismatch for path %x", node.Path.Encode())
 	}
 }

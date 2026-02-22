@@ -48,7 +48,7 @@ func TestSMT_RightSubtree_TwoInsertedNodesSamePath(t *testing.T) {
 		t.Fatalf("expected root.RightNode to be a branch after two inserts")
 	}
 
-	_, pathBits := smt.CalculateKeyFromPath(right.Path)
+	_, pathBits := right.Path.KeyBits()
 	if pathBits < 2 {
 		t.Fatalf("expected shared right path length >= 2 bits, got %d", pathBits)
 	}
@@ -284,7 +284,7 @@ func TestSMT_RightSubtree_DuplicateInsert_AppendOnlyFalse_UpdatesNodeAndHashes(t
 		t.Fatalf("leaf data was not updated on duplicate insert")
 	}
 
-	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path, updatedValueCBOR)
+	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
 	if !bytes.Equal([]byte(leafAfter.Hash), []byte(expectedLeafHash)) {
 		t.Fatalf("updated leaf hash mismatch")
 	}
