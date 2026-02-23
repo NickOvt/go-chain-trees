@@ -406,11 +406,119 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 		return false, err
 	}
 
-	if bytes.Equal(recomputedRoot, proof.Root) {
-		return true, nil
+	if !bytes.Equal(recomputedRoot, proof.Root) {
+		return false, fmt.Errorf("calculated root hash does not match provided root hash")
 	}
 
-	return false, fmt.Errorf("calculated root hash does not match provided root hash")
+	if err := t.verifyLeafPathMatchesLeafKey(proof); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func buildFullLeafPathFromProof(proof *InclusionExclusionProof) (*Path, error) {
+	if proof == nil || len(proof.Path) == 0 {
+		return nil, fmt.Errorf("cannot build leaf path from empty proof")
+	}
+
+	combined := new(big.Int)
+	totalBits := 0
+
+	for i := len(proof.Path) - 1; i >= 0; i-- {
+		if proof.Path[i] == nil {
+			return nil, fmt.Errorf("proof contains nil node at index %d", i)
+		}
+
+		segment, ok := decodeEncodedPath(proof.Path[i].Path)
+		if !ok {
+			return nil, fmt.Errorf("proof path[%d] is not a valid encoded path", i)
+		}
+
+		if pathBitLen(segment) == 0 {
+			continue
+		}
+
+		shifted := new(big.Int).Lsh(new(big.Int).Set(&segment.bits), uint(totalBits))
+		combined.Or(combined, shifted)
+		totalBits += pathBitLen(segment)
+	}
+
+	return newPathFromBigInt(combined, totalBits), nil
+}
+
+func (t *SMT) findLeafByFullPath(fullPath *Path) (*Node, error) {
+	if fullPath == nil {
+		return nil, fmt.Errorf("full path is nil")
+	}
+
+	current := t.GetRoot()
+	remaining := clonePath(fullPath)
+	depth := 0
+
+	for current != nil && !current.IsLeaf {
+		if pathBitLen(remaining) <= 0 {
+			return nil, fmt.Errorf("path exhausted before reaching leaf")
+		}
+
+		goLeft := pathBit(remaining, 0) == 0
+
+		var child *Node
+		if goLeft {
+			child = current.LeftNode
+		} else {
+			child = current.RightNode
+		}
+		if child == nil {
+			return nil, fmt.Errorf("missing child for path at depth %d", depth)
+		}
+
+		_, commonPrefixLen := pathCommonPrefix(child.Path, remaining)
+		if commonPrefixLen != pathBitLen(child.Path) {
+			return nil, fmt.Errorf("path mismatch at depth %d", depth)
+		}
+
+		remaining = pathCutPrefix(remaining, commonPrefixLen)
+		depth += commonPrefixLen
+		current = child
+	}
+
+	if current == nil || !current.IsLeaf {
+		return nil, fmt.Errorf("leaf not found for calculated path")
+	}
+
+	if pathBitLen(remaining) != 0 {
+		return nil, fmt.Errorf("calculated path has extra bits past located leaf")
+	}
+
+	return current, nil
+}
+
+func (t *SMT) verifyLeafPathMatchesLeafKey(proof *InclusionExclusionProof) error {
+	fullPath, err := buildFullLeafPathFromProof(proof)
+	if err != nil {
+		return err
+	}
+
+	keyBitLen := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
+	if pathBitLen(fullPath) != keyBitLen {
+		return fmt.Errorf("calculated leaf path bit length %d does not match key bit length %d", pathBitLen(fullPath), keyBitLen)
+	}
+
+	leaf, err := t.findLeafByFullPath(fullPath)
+	if err != nil {
+		return err
+	}
+	if len(leaf.Key) == 0 {
+		return fmt.Errorf("located leaf has empty key")
+	}
+
+	leafKeyPath := pathFromKeyBytes(leaf.Key, len(leaf.Key)*8)
+	if !pathEqual(leafKeyPath, fullPath) {
+		return fmt.Errorf("calculated leaf path does not match leaf key")
+	}
+
+	return nil
 }
 
 func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclusionProof) (utils.Hash, error) {

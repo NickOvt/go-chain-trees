@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/NickOvt/go-chain-trees/smt"
@@ -280,6 +281,38 @@ func TestSMT_VerifyPublicProof_TamperedRoot(t *testing.T) {
 	}
 	if valid {
 		t.Fatalf("expected tampered public proof to be invalid")
+	}
+}
+
+func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchLeafKey(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	leaf := findLeafByKeyHash(tree.GetRoot(), targetHash)
+	if leaf == nil {
+		t.Fatalf("failed to find target leaf in tree")
+	}
+	leaf.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
+
+	valid, err := tree.VerifyProof(proof)
+	if err == nil {
+		t.Fatalf("expected verify error when leaf key does not match calculated path")
+	}
+	if valid {
+		t.Fatalf("expected invalid proof when leaf key is inconsistent with path")
+	}
+	if !strings.Contains(err.Error(), "does not match leaf key") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
