@@ -306,7 +306,9 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			proof, err := smtTree.GenerateInclusionExclusionProof(key)
+			// SMT.Insert hashes keys internally, so proof queries must use the same hashed key domain.
+			proofKey := utils.GenerateHash(options.HashAlgo, key)
+			proof, err := smtTree.GenerateInclusionExclusionProof(proofKey)
 			if err != nil {
 				return 0, 0, 0, err
 			}
