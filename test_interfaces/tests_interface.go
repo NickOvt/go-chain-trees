@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math"
+	"math/big"
 	randMath "math/rand"
 	"os"
 	"path/filepath"
@@ -677,4 +678,14 @@ func TestWithProfile(t *testing.T, options *BenchmarkOptions, now time.Time) Ben
 	}
 
 	return result
+}
+
+func GetCounterHashFunc() func() utils.Hash {
+	counter := big.NewInt(0)
+	one := big.NewInt(1)
+
+	return func() utils.Hash {
+		counter.Add(counter, one)
+		return utils.GenerateHashSha256(counter.Bytes())
+	}
 }
