@@ -1,7 +1,6 @@
 package test_interfaces
 
 import (
-	"crypto/rand"
 	"fmt"
 	"math"
 	"math/big"
@@ -342,14 +341,21 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	t.Logf("Tree type: %s", treeType)
 	////
 
-	//// Block size and Data
-	blockSize := options.BlockSizeBytes
-	if blockSize == 0 {
-		blockSize = 1024
-	}
+	//// Data
 	dataSize := options.DataSizeBytes
 	if dataSize == 0 {
 		dataSize = 8
+	}
+
+	sampleHashFn := GetCounterHashFunc()
+	insertDataHashFn := GetCounterHashFunc()
+
+	nextInsertData := func() []byte {
+		data := make([]byte, dataSize)
+		for i := 0; i < len(data); {
+			i += copy(data[i:], insertDataHashFn())
+		}
+		return data
 	}
 	////
 
@@ -413,12 +419,8 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		startInserts := time.Now()
 
 		for i := 0; i < options.ElementCount; i++ {
-			block := make([]byte, blockSize)
-			rand.Read(block)
-			data := make([]byte, dataSize)
-			rand.Read(data)
-
-			hashOfBlock := utils.GenerateHashSha256(block)
+			hashOfBlock := sampleHashFn()
+			data := nextInsertData()
 
 			if _, ok := sampleIndices[i]; ok {
 				proofGenerationKeySample[sampleIndicesI] = hashOfBlock
@@ -487,10 +489,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	if options.IncludeExclusionProof {
 		exclusionProofResults := map[int]ProofResult{}
 		for idx := range sampleSize {
-			block := make([]byte, blockSize)
-			rand.Read(block)
-
-			hashOfBlock := utils.GenerateHashSha256(block)
+			hashOfBlock := sampleHashFn()
 			proofSizeBytes, elapsedProof, elapsedVerif, err := proveAndVerifyFn(hashOfBlock)
 			if err != nil {
 				t.Fatal(err)
