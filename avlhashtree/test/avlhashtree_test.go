@@ -30,12 +30,12 @@ func TestMain(m *testing.M) {
 // ------------------------------
 
 func TestAVL_10k(t *testing.T) {
-	result := test_interfaces.TestWithProfile(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8, MeasureDeletes: true, DeleteCount: 1000}, now)
+	result := test_interfaces.TestWithProfile(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8}, now)
 	allResults = append(allResults, result)
 }
 
 func TestAVL_50k(t *testing.T) {
-	result := test_interfaces.TestWithProfile(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8, MeasureDeletes: true, DeleteCount: 1000}, now)
+	result := test_interfaces.TestWithProfile(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8}, now)
 	allResults = append(allResults, result)
 }
 
