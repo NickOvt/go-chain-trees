@@ -21,9 +21,19 @@ import (
 const (
 	AVLHASHTREE = "avlhashtree"
 	SMT         = "smt"
+
+	defaultSampleSize     float32       = 0.01
+	defaultBlockSizeBytes               = 32
+	defaultDataSizeBytes                = 8
+	runtimeResetDelay     time.Duration = 100 * time.Millisecond
 )
 
 type BenchmarkResult struct {
+	TreeType             string
+	Scenario             string
+	PrebuildElementCount int
+	FinalElementCount    int
+
 	//// Inclusion Proofs
 	InclusionProofGenTime    time.Duration
 	InclusionProofSize       int
@@ -57,18 +67,22 @@ type BenchmarkResult struct {
 
 type BenchmarkOptions struct {
 	TreeType                 string
+	ScenarioName             string
 	IncludeInclusionProof    bool
 	IncludeExclusionProof    bool
 	InclusionProofSequential bool
 	SampleSize               float32 // percentage
 	BlockSizeBytes           int
 	DataSizeBytes            int
+	PrebuildElementCount     int
 	MeasureInserts           bool
+	MeasureExistingInserts   bool
 	MeasureDeletes           bool
 	ElementCount             int
 	DeleteCount              int
 	HashAlgo                 utils.HashAlgo
 	DeleteSequential         bool
+	DisableSMTAppendOnly     bool
 	CPUProfile               bool
 }
 
@@ -93,13 +107,134 @@ type InsertDeleteMetrics struct {
 	HeapObjects  uint64
 }
 
+type benchmarkProfiler struct {
+	t        *testing.T
+	dirPath  string
+	baseName string
+	cpuFile  *os.File
+	started  bool
+	enabled  bool
+}
+
+type keySampleCollector struct {
+	inclusionIndices map[int]bool
+	inclusionKeys    []utils.Hash
+	inclusionIndex   int
+	deleteIndices    map[int]bool
+	deleteKeys       []utils.Hash
+	deleteIndex      int
+}
+
+func (collector *keySampleCollector) capture(globalIndex int, key utils.Hash) {
+	if collector == nil {
+		return
+	}
+
+	if collector.inclusionKeys != nil && collector.inclusionIndices[globalIndex] {
+		collector.inclusionKeys[collector.inclusionIndex] = key
+		collector.inclusionIndex++
+	}
+
+	if collector.deleteKeys != nil && collector.deleteIndices[globalIndex] {
+		collector.deleteKeys[collector.deleteIndex] = key
+		collector.deleteIndex++
+	}
+}
+
+func NewProofOnlyBenchmarkOptions(treeType string, buildCount int, sampleSize float32) *BenchmarkOptions {
+	options := newDefaultBenchmarkOptions(treeType)
+	options.ScenarioName = fmt.Sprintf("proof_only_after_%s_build", formatCountLabel(buildCount))
+	options.PrebuildElementCount = buildCount
+	options.IncludeInclusionProof = true
+
+	if sampleSize > 0 {
+		options.SampleSize = sampleSize
+	}
+
+	return options
+}
+
+func NewPostBuildInsertBenchmarkOptions(treeType string, prebuildCount int, insertCount int) *BenchmarkOptions {
+	options := newDefaultBenchmarkOptions(treeType)
+	options.ScenarioName = fmt.Sprintf("build_%s_then_add_%s_new", formatCountLabel(prebuildCount), formatCountLabel(insertCount))
+	options.PrebuildElementCount = prebuildCount
+	options.MeasureInserts = true
+	options.ElementCount = insertCount
+	return options
+}
+
+func NewExistingKeyInsertBenchmarkOptions(treeType string, prebuildCount int, insertCount int) *BenchmarkOptions {
+	options := newDefaultBenchmarkOptions(treeType)
+	options.ScenarioName = fmt.Sprintf("build_%s_then_reinsert_%s_existing", formatCountLabel(prebuildCount), formatCountLabel(insertCount))
+	options.PrebuildElementCount = prebuildCount
+	options.MeasureInserts = true
+	options.MeasureExistingInserts = true
+	options.DisableSMTAppendOnly = true
+	options.ElementCount = insertCount
+	return options
+}
+
+func newDefaultBenchmarkOptions(treeType string) *BenchmarkOptions {
+	return &BenchmarkOptions{
+		TreeType:       treeType,
+		SampleSize:     defaultSampleSize,
+		BlockSizeBytes: defaultBlockSizeBytes,
+		DataSizeBytes:  defaultDataSizeBytes,
+		CPUProfile:     true,
+	}
+}
+
+func formatCountLabel(count int) string {
+	switch {
+	case count == 0:
+		return "0"
+	case count%1_000_000 == 0:
+		return fmt.Sprintf("%dm", count/1_000_000)
+	case count%1_000 == 0:
+		return fmt.Sprintf("%dk", count/1_000)
+	default:
+		return fmt.Sprintf("%d", count)
+	}
+}
+
+func normalizeBenchmarkOptions(options *BenchmarkOptions) {
+	if options.SampleSize <= 0 {
+		options.SampleSize = defaultSampleSize
+	}
+
+	if options.BlockSizeBytes == 0 {
+		options.BlockSizeBytes = defaultBlockSizeBytes
+	}
+
+	if options.DataSizeBytes == 0 {
+		options.DataSizeBytes = defaultDataSizeBytes
+	}
+
+	if strings.TrimSpace(options.ScenarioName) == "" {
+		switch {
+		case options.PrebuildElementCount > 0 && options.MeasureExistingInserts:
+			options.ScenarioName = fmt.Sprintf("build_%s_then_reinsert_%s_existing", formatCountLabel(options.PrebuildElementCount), formatCountLabel(options.ElementCount))
+		case options.PrebuildElementCount > 0 && options.MeasureInserts:
+			options.ScenarioName = fmt.Sprintf("build_%s_then_add_%s_new", formatCountLabel(options.PrebuildElementCount), formatCountLabel(options.ElementCount))
+		case options.PrebuildElementCount > 0 && (options.IncludeInclusionProof || options.IncludeExclusionProof):
+			options.ScenarioName = fmt.Sprintf("proof_only_after_%s_build", formatCountLabel(options.PrebuildElementCount))
+		default:
+			options.ScenarioName = fmt.Sprintf("build_%s", formatCountLabel(options.ElementCount))
+		}
+	}
+}
+
 func PrintCombinedResults(allResults []BenchmarkResult) {
 	fmt.Println("\n\n========================================")
 	fmt.Println("BENCHMARK SUITE RESULTS")
 	fmt.Println("========================================")
 
-	fmt.Printf("%-25s %-20s %-20s %-25s %-25s %-22s %-22s %-23s %-25s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
-		"Elements [Inserts]",
+	fmt.Printf("%-14s %-34s %-16s %-16s %-18s %-20s %-20s %-25s %-25s %-22s %-22s %-23s %-25s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
+		"Tree",
+		"Scenario",
+		"Prebuild",
+		"Final Elems",
+		"Timed Inserts",
 		"Insert Time [Inserts]",
 		"Avg/Block [Inserts]",
 		"Mem Alloc MB [Inserts]",
@@ -118,8 +253,12 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 		"Total Alloc MB [Deletes]",
 		"Heap Objs [Deletes]")
 
-	fmt.Printf("%-25s %-20s %-20s %-25s %-25s %-22s %-22s %-23s %-25s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
-		strings.Repeat("-", 25),
+	fmt.Printf("%-14s %-34s %-16s %-16s %-18s %-20s %-20s %-25s %-25s %-22s %-22s %-23s %-25s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
+		strings.Repeat("-", 14),
+		strings.Repeat("-", 34),
+		strings.Repeat("-", 16),
+		strings.Repeat("-", 16),
+		strings.Repeat("-", 18),
 		strings.Repeat("-", 20),
 		strings.Repeat("-", 20),
 		strings.Repeat("-", 25),
@@ -138,7 +277,11 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 		strings.Repeat("-", 25),
 		strings.Repeat("-", 22))
 	for _, r := range allResults {
-		fmt.Printf("%-25d %-20v %-20v %-25.2f %-25.2f %-22d %-22v %-23d %-25v %-22v %-23d %-25v %-22d %-20v %-20v %-25.2f %-25.2f %-22d\n",
+		fmt.Printf("%-14s %-34s %-16d %-16d %-18d %-20v %-20v %-25.2f %-25.2f %-22d %-22v %-23d %-25v %-22v %-23d %-25v %-22d %-20v %-20v %-25.2f %-25.2f %-22d\n",
+			r.TreeType,
+			r.Scenario,
+			r.PrebuildElementCount,
+			r.FinalElementCount,
 			r.InsertElementCount,
 			r.InsertionTime,
 			r.AvgPerBlock,
@@ -179,11 +322,15 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 	defer file.Close()
 
 	// Header
-	file.WriteString("InsertElements,InsertTime(ns),AvgPerBlock(ns),MemAllocMB,TotalAllocMB,HeapObjects,InclusionProofGen(ns),InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofGen(ns),ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects\n")
+	file.WriteString("TreeType,Scenario,PrebuildElements,FinalElements,InsertElements,InsertTime(ns),AvgPerBlock(ns),MemAllocMB,TotalAllocMB,HeapObjects,InclusionProofGen(ns),InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofGen(ns),ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects\n")
 
 	// Data rows
 	for _, r := range allResults {
-		line := fmt.Sprintf("%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
+		line := fmt.Sprintf("%s,%s,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
+			r.TreeType,
+			r.Scenario,
+			r.PrebuildElementCount,
+			r.FinalElementCount,
 			r.InsertElementCount,
 			r.InsertionTime.Nanoseconds(),
 			r.AvgPerBlock.Nanoseconds(),
@@ -226,12 +373,323 @@ func calculateProofBenchmark(proofResults map[int]ProofResult) (time.Duration, i
 	return avgProofTime, avgProofSize, avgVerifyTime
 }
 
-func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
+func newBenchmarkProfiler(t *testing.T, options *BenchmarkOptions, now time.Time) *benchmarkProfiler {
+	if !options.CPUProfile {
+		return nil
+	}
+
+	currentDate := fmt.Sprintf("%02d-%02d-%d-%02d-%02d-%02d", now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
+	if err := os.MkdirAll(currentDate, 0755); err != nil {
+		panic(err)
+	}
+
+	return &benchmarkProfiler{
+		t:        t,
+		dirPath:  currentDate,
+		baseName: buildProfileBaseName(options),
+		enabled:  true,
+	}
+}
+
+func (profiler *benchmarkProfiler) Start() {
+	if profiler == nil || !profiler.enabled || profiler.started {
+		return
+	}
+
+	cpuFile, err := os.Create(filepath.Join(profiler.dirPath, "cpu_"+profiler.baseName+".prof"))
+	if err != nil {
+		profiler.t.Fatalf("failed to create CPU profile: %v", err)
+	}
+
+	if err := pprof.StartCPUProfile(cpuFile); err != nil {
+		cpuFile.Close()
+		profiler.t.Fatalf("failed to start CPU profile: %v", err)
+	}
+
+	profiler.cpuFile = cpuFile
+	profiler.started = true
+}
+
+func (profiler *benchmarkProfiler) Stop() {
+	if profiler == nil || !profiler.started {
+		return
+	}
+
+	pprof.StopCPUProfile()
+
+	if profiler.cpuFile != nil {
+		profiler.cpuFile.Close()
+		profiler.cpuFile = nil
+	}
+
+	runtime.GC()
+
+	heapFile, err := os.Create(filepath.Join(profiler.dirPath, "heap_"+profiler.baseName+".prof"))
+	if err != nil {
+		profiler.t.Fatalf("failed to create heap profile: %v", err)
+	}
+	defer heapFile.Close()
+
+	if err := pprof.WriteHeapProfile(heapFile); err != nil {
+		profiler.t.Fatalf("failed to write heap profile: %v", err)
+	}
+
+	profiler.started = false
+}
+
+func buildProfileBaseName(options *BenchmarkOptions) string {
+	parts := []string{sanitizeProfileLabel(strings.ToLower(options.TreeType))}
+	if options.ScenarioName != "" {
+		parts = append(parts, sanitizeProfileLabel(options.ScenarioName))
+	}
+	if options.PrebuildElementCount > 0 {
+		parts = append(parts, "prebuild_"+formatCountLabel(options.PrebuildElementCount))
+	}
+	if options.ElementCount > 0 {
+		parts = append(parts, "ops_"+formatCountLabel(options.ElementCount))
+	}
+
+	baseName := strings.Trim(strings.Join(parts, "_"), "_")
+	if baseName == "" {
+		return "benchmark"
+	}
+
+	return baseName
+}
+
+func sanitizeProfileLabel(label string) string {
+	label = strings.ToLower(label)
+	label = strings.NewReplacer(" ", "_", "-", "_", "/", "_").Replace(label)
+
+	var builder strings.Builder
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '_':
+			builder.WriteRune(r)
+		}
+	}
+
+	if builder.Len() == 0 {
+		return "benchmark"
+	}
+
+	return builder.String()
+}
+
+func hasMeasuredPhase(options *BenchmarkOptions) bool {
+	return options.MeasureInserts || options.IncludeInclusionProof || options.IncludeExclusionProof || (options.MeasureDeletes && options.DeleteCount > 0)
+}
+
+func totalDistinctElementCount(options *BenchmarkOptions) int {
+	total := options.PrebuildElementCount
+	if options.MeasureInserts && !options.MeasureExistingInserts {
+		total += options.ElementCount
+	}
+	return total
+}
+
+func resetRuntimeState() {
+	runtime.GC()
+	time.Sleep(runtimeResetDelay)
+}
+
+func calculateSelectionCount(totalCount int, ratio float32) int {
+	if totalCount <= 0 {
+		return 0
+	}
+
+	count := int(math.Round(float64(float32(totalCount) * ratio)))
+	if count < 1 {
+		count = 1
+	}
+	if count > totalCount {
+		count = totalCount
+	}
+
+	return count
+}
+
+func buildSelectionIndices(totalCount int, selectionCount int, sequential bool) map[int]bool {
+	indices := map[int]bool{}
+	if totalCount <= 0 || selectionCount <= 0 {
+		return indices
+	}
+
+	if sequential {
+		for idx := 0; idx < selectionCount; idx++ {
+			indices[idx] = true
+		}
+		return indices
+	}
+
+	for len(indices) < selectionCount {
+		indices[randMath.Intn(totalCount)] = true
+	}
+
+	return indices
+}
+
+func newDataGenerator(dataSize int, counterStart int64) func() []byte {
+	dataHashFn := GetCounterHashFuncFrom(counterStart)
+
+	return func() []byte {
+		data := make([]byte, dataSize)
+		for i := 0; i < len(data); {
+			i += copy(data[i:], dataHashFn())
+		}
+		return data
+	}
+}
+
+func runFreshInsertBatch(
+	count int,
+	globalIndex *int,
+	keyFn func() utils.Hash,
+	nextData func() []byte,
+	insertFn func(key utils.Hash, data []byte) error,
+	collector *keySampleCollector,
+	measure bool,
+) (InsertDeleteMetrics, error) {
+	if count <= 0 {
+		return InsertDeleteMetrics{}, nil
+	}
+
+	var before runtime.MemStats
+	if measure {
+		runtime.ReadMemStats(&before)
+	}
+
+	start := time.Now()
+	for idx := 0; idx < count; idx++ {
+		key := keyFn()
+		data := nextData()
+
+		if collector != nil {
+			collector.capture(*globalIndex, key)
+		}
+
+		if err := insertFn(key, data); err != nil {
+			return InsertDeleteMetrics{}, err
+		}
+
+		*globalIndex = *globalIndex + 1
+	}
+	elapsed := time.Since(start)
+
+	if !measure {
+		return InsertDeleteMetrics{}, nil
+	}
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+
+	return InsertDeleteMetrics{
+		Elapsed:      elapsed,
+		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
+		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
+		HeapObjects:  after.HeapObjects,
+	}, nil
+}
+
+func measureExistingInsertBatch(
+	count int,
+	keyFn func() utils.Hash,
+	nextData func() []byte,
+	insertFn func(key utils.Hash, data []byte) error,
+) (InsertDeleteMetrics, error) {
+	if count <= 0 {
+		return InsertDeleteMetrics{}, nil
+	}
+
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	start := time.Now()
+	for idx := 0; idx < count; idx++ {
+		if err := insertFn(keyFn(), nextData()); err != nil {
+			return InsertDeleteMetrics{}, err
+		}
+	}
+	elapsed := time.Since(start)
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+
+	return InsertDeleteMetrics{
+		Elapsed:      elapsed,
+		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
+		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
+		HeapObjects:  after.HeapObjects,
+	}, nil
+}
+
+func measureProofBatch(
+	t *testing.T,
+	proofKeys []utils.Hash,
+	proveAndVerifyFn func(key utils.Hash) (int, time.Duration, time.Duration, error),
+) InclusionExclusionProofResult {
+	proofResults := map[int]ProofResult{}
+
+	for idx, proofKey := range proofKeys {
+		proofSizeBytes, elapsedProof, elapsedVerif, err := proveAndVerifyFn(proofKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		proofResults[idx] = ProofResult{
+			proofSizeBytes:   proofSizeBytes,
+			proofTime:        elapsedProof,
+			verificationTime: elapsedVerif,
+		}
+	}
+
+	avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(proofResults)
+	return InclusionExclusionProofResult{
+		avgProofTime:  avgProofTime,
+		avgProofSize:  avgProofSize,
+		avgVerifyTime: avgVerifyTime,
+	}
+}
+
+func measureDeleteBatch(t *testing.T, deleteKeys []utils.Hash, deleteFn func(key utils.Hash) error) InsertDeleteMetrics {
+	if len(deleteKeys) == 0 {
+		return InsertDeleteMetrics{}
+	}
+
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	start := time.Now()
+	for _, deleteKey := range deleteKeys {
+		if err := deleteFn(deleteKey); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elapsed := time.Since(start)
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+
+	return InsertDeleteMetrics{
+		Elapsed:      elapsed,
+		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
+		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
+		HeapObjects:  after.HeapObjects,
+	}
+}
+
+func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkProfiler) BenchmarkResult {
+	normalizeBenchmarkOptions(options)
+
 	t.Logf("\n========================================")
-	t.Logf("Starting test with %d elements", options.ElementCount)
+	t.Logf("Scenario: %s", options.ScenarioName)
+	t.Logf("Measured inserts: %d | prebuild: %d", options.ElementCount, options.PrebuildElementCount)
 	t.Logf("========================================")
 
-	//// Tree
 	if options.HashAlgo == "" {
 		options.HashAlgo = utils.SHA256
 	}
@@ -239,6 +697,20 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	treeType := strings.ToLower(options.TreeType)
 	if treeType == "" {
 		treeType = AVLHASHTREE
+	}
+
+	if options.MeasureExistingInserts {
+		if options.PrebuildElementCount == 0 {
+			t.Fatalf("existing-key insert measurement requires PrebuildElementCount > 0")
+		}
+		if options.ElementCount > options.PrebuildElementCount {
+			t.Fatalf("cannot reinsert %d existing keys from only %d prebuilt elements", options.ElementCount, options.PrebuildElementCount)
+		}
+	}
+
+	totalDistinctElements := totalDistinctElementCount(options)
+	if totalDistinctElements == 0 && (options.IncludeInclusionProof || options.IncludeExclusionProof || (options.MeasureDeletes && options.DeleteCount > 0)) {
+		t.Fatalf("proof/delete measurement requires at least one inserted element")
 	}
 
 	var insertFn func(key utils.Hash, data []byte) error
@@ -284,7 +756,6 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			if err != nil {
 				return 0, 0, 0, err
 			}
-
 			if !res {
 				return 0, 0, 0, fmt.Errorf("verification failed")
 			}
@@ -292,7 +763,12 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			return len(proofCbor), elapsedProof, elapsedVerif, nil
 		}
 	case SMT:
-		smtTree := smt.NewSMT(options.HashAlgo, true)
+		if options.MeasureExistingInserts && !options.DisableSMTAppendOnly {
+			t.Fatalf("SMT existing-key insert measurement requires DisableSMTAppendOnly=true")
+		}
+
+		appendOnly := !options.DisableSMTAppendOnly
+		smtTree := smt.NewSMT(options.HashAlgo, appendOnly)
 
 		insertFn = func(key utils.Hash, data []byte) error {
 			_, err := smtTree.Insert(key, data)
@@ -306,7 +782,6 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			// SMT.Insert hashes keys internally, so proof queries must use the same hashed key domain.
 			proofKey := utils.GenerateHash(options.HashAlgo, key)
 			proof, err := smtTree.GenerateInclusionExclusionProof(proofKey)
 			if err != nil {
@@ -327,7 +802,6 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 			if err != nil {
 				return 0, 0, 0, err
 			}
-
 			if !res {
 				return 0, 0, 0, fmt.Errorf("verification failed")
 			}
@@ -339,276 +813,167 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 	}
 
 	t.Logf("Tree type: %s", treeType)
-	////
-
-	//// Data
-	dataSize := options.DataSizeBytes
-	if dataSize == 0 {
-		dataSize = 8
+	if treeType == SMT {
+		t.Logf("SMT append-only mode: %v", !options.DisableSMTAppendOnly)
 	}
 
 	sampleHashFn := GetCounterHashFunc()
-	insertDataHashFn := GetCounterHashFunc()
+	nextInsertData := newDataGenerator(options.DataSizeBytes, 0)
+	nextExistingInsertData := newDataGenerator(options.DataSizeBytes, int64(totalDistinctElements))
 
-	nextInsertData := func() []byte {
-		data := make([]byte, dataSize)
-		for i := 0; i < len(data); {
-			i += copy(data[i:], insertDataHashFn())
-		}
-		return data
-	}
-	////
-
-	//// Inclusion proof
-	sampleSize := int(math.Round(float64(float32(options.ElementCount) * options.SampleSize)))
-	if sampleSize < 1 {
-		sampleSize = 1
+	proofSampleSize := 0
+	if options.IncludeInclusionProof || options.IncludeExclusionProof {
+		proofSampleSize = calculateSelectionCount(totalDistinctElements, options.SampleSize)
 	}
 
-	sampleIndices := map[int]bool{}
-	var proofGenerationKeySample []utils.Hash
+	collector := &keySampleCollector{}
 	if options.IncludeInclusionProof {
-		proofGenerationKeySample = make([]utils.Hash, sampleSize)
-		if options.InclusionProofSequential {
-			// nodes taken for proof sequentially
-			for j := 0; j < sampleSize; j++ {
-				sampleIndices[j] = true
-			}
-		} else {
-			for len(sampleIndices) < sampleSize {
-				// nodes taken for proof randomly
-				sampleIndices[randMath.Intn(options.ElementCount)] = true
-			}
-		}
+		collector.inclusionIndices = buildSelectionIndices(totalDistinctElements, proofSampleSize, options.InclusionProofSequential)
+		collector.inclusionKeys = make([]utils.Hash, proofSampleSize)
 	}
-	////
 
-	//// General benchmark results
+	if options.MeasureDeletes && options.DeleteCount > 0 {
+		deleteCount := options.DeleteCount
+		if deleteCount > totalDistinctElements {
+			deleteCount = totalDistinctElements
+		}
+		collector.deleteIndices = buildSelectionIndices(totalDistinctElements, deleteCount, options.DeleteSequential)
+		collector.deleteKeys = make([]utils.Hash, deleteCount)
+	}
+
 	results := map[string]any{}
-	////
+	globalIndex := 0
+	profilerStarted := false
+	defer func() {
+		if profilerStarted {
+			profiler.Stop()
+		}
+	}()
 
-	//// Deletes
-	deleteIndices := map[int]bool{}
-	var deletesKeySample []utils.Hash
-
-	if options.MeasureDeletes && options.DeleteCount > 0 {
-		deletesKeySample = make([]utils.Hash, options.DeleteCount)
-		if options.DeleteSequential {
-			// sequential deletes
-			for j := 0; j < options.DeleteCount; j++ {
-				deleteIndices[j] = true
-			}
-		} else {
-			// random deletes
-			for len(deleteIndices) < options.DeleteCount {
-				deleteIndices[randMath.Intn(options.ElementCount)] = true
-			}
+	if options.PrebuildElementCount > 0 {
+		t.Logf("Prebuilding %d blocks before measurement", options.PrebuildElementCount)
+		if _, err := runFreshInsertBatch(options.PrebuildElementCount, &globalIndex, sampleHashFn, nextInsertData, insertFn, collector, false); err != nil {
+			t.Fatal(err)
 		}
 	}
-	////
 
-	//// Inserts
-	sampleIndicesI := 0
-	deleteSampleIndicesI := 0
+	if options.PrebuildElementCount > 0 && hasMeasuredPhase(options) {
+		resetRuntimeState()
+	}
+
+	if hasMeasuredPhase(options) && profiler != nil {
+		profiler.Start()
+		profilerStarted = true
+	}
+
 	if options.MeasureInserts {
-		// Memory stats before
-		var m1 runtime.MemStats
-		runtime.ReadMemStats(&m1)
+		var (
+			insertMetrics InsertDeleteMetrics
+			err           error
+		)
 
-		// Start timing
-		startInserts := time.Now()
-
-		for i := 0; i < options.ElementCount; i++ {
-			hashOfBlock := sampleHashFn()
-			data := nextInsertData()
-
-			if _, ok := sampleIndices[i]; ok {
-				proofGenerationKeySample[sampleIndicesI] = hashOfBlock
-				sampleIndicesI++
-			}
-
-			if _, ok := deleteIndices[i]; ok {
-				deletesKeySample[deleteSampleIndicesI] = hashOfBlock
-				deleteSampleIndicesI++
-			}
-
-			err := insertFn(hashOfBlock, data)
-			if err != nil {
-				t.Fatal(err)
-			}
+		if options.MeasureExistingInserts {
+			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, GetCounterHashFunc(), nextExistingInsertData, insertFn)
+		} else {
+			insertMetrics, err = runFreshInsertBatch(options.ElementCount, &globalIndex, sampleHashFn, nextInsertData, insertFn, collector, true)
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		// End timing
-		elapsedInserts := time.Since(startInserts)
-
-		// Memory stats after
-		var m2 runtime.MemStats
-		runtime.ReadMemStats(&m2)
-
-		// Calculate memory used
-		allocatedMBInserts := float64(m2.Alloc-m1.Alloc) / 1024 / 1024
-		totalAllocMBInserts := float64(m2.TotalAlloc-m1.TotalAlloc) / 1024 / 1024
-		heapObjects := m2.HeapObjects
-
-		results["inserts"] = InsertDeleteMetrics{
-			Elapsed:      elapsedInserts,
-			AllocatedMB:  allocatedMBInserts,
-			TotalAllocMB: totalAllocMBInserts,
-			HeapObjects:  heapObjects,
-		}
+		results["inserts"] = insertMetrics
 	}
-	////
 
-	//// Inclusion Proofs
+	if len(collector.inclusionKeys) > 0 && collector.inclusionIndex != len(collector.inclusionKeys) {
+		t.Fatalf("expected %d proof sample keys, captured %d", len(collector.inclusionKeys), collector.inclusionIndex)
+	}
+
+	if len(collector.deleteKeys) > 0 && collector.deleteIndex != len(collector.deleteKeys) {
+		t.Fatalf("expected %d delete sample keys, captured %d", len(collector.deleteKeys), collector.deleteIndex)
+	}
+
 	if options.IncludeInclusionProof {
-		inclusionProofResults := map[int]ProofResult{}
-		for idx, proofKey := range proofGenerationKeySample {
-			proofSizeBytes, elapsedProof, elapsedVerif, err := proveAndVerifyFn(proofKey)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			inclusionProofResults[idx] = ProofResult{
-				proofSizeBytes:   proofSizeBytes,
-				proofTime:        elapsedProof,
-				verificationTime: elapsedVerif,
-			}
-
-			avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(inclusionProofResults)
-
-			results["inclusionProof"] = InclusionExclusionProofResult{
-				avgProofTime,
-				avgProofSize,
-				avgVerifyTime,
-			}
-		}
+		results["inclusionProof"] = measureProofBatch(t, collector.inclusionKeys, proveAndVerifyFn)
 	}
-	////
 
-	//// Exclusion Proofs
 	if options.IncludeExclusionProof {
-		exclusionProofResults := map[int]ProofResult{}
-		for idx := range sampleSize {
-			hashOfBlock := sampleHashFn()
-			proofSizeBytes, elapsedProof, elapsedVerif, err := proveAndVerifyFn(hashOfBlock)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			exclusionProofResults[idx] = ProofResult{
-				proofSizeBytes:   proofSizeBytes,
-				proofTime:        elapsedProof,
-				verificationTime: elapsedVerif,
-			}
-
-			avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(exclusionProofResults)
-
-			results["exclusionProof"] = InclusionExclusionProofResult{
-				avgProofTime,
-				avgProofSize,
-				avgVerifyTime,
-			}
+		exclusionKeys := make([]utils.Hash, proofSampleSize)
+		for idx := range proofSampleSize {
+			exclusionKeys[idx] = sampleHashFn()
 		}
+		results["exclusionProof"] = measureProofBatch(t, exclusionKeys, proveAndVerifyFn)
 	}
-	////
 
-	//// Deletes
-	if options.MeasureDeletes && options.DeleteCount > 0 {
-		// Memory stats before
-		var m1 runtime.MemStats
-		runtime.ReadMemStats(&m1)
-
-		// Start timing
-		startDeletes := time.Now()
-
-		for _, deleteKey := range deletesKeySample {
-			err := deleteFn(deleteKey)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-
-		// End timing
-		elapsedDeletes := time.Since(startDeletes)
-
-		// Memory stats after
-		var m2 runtime.MemStats
-		runtime.ReadMemStats(&m2)
-
-		// Calculate memory used
-		allocatedMBDeletes := float64(m2.Alloc-m1.Alloc) / 1024 / 1024
-		totalAllocMBDeletes := float64(m2.TotalAlloc-m1.TotalAlloc) / 1024 / 1024
-		heapObjects := m2.HeapObjects
-
-		results["deletes"] = InsertDeleteMetrics{
-			Elapsed:      elapsedDeletes,
-			AllocatedMB:  allocatedMBDeletes,
-			TotalAllocMB: totalAllocMBDeletes,
-			HeapObjects:  heapObjects,
-		}
+	if options.MeasureDeletes && len(collector.deleteKeys) > 0 {
+		results["deletes"] = measureDeleteBatch(t, collector.deleteKeys, deleteFn)
 	}
-	////
 
-	// Log individual test results
-	t.Logf("Inserted %d blocks", options.ElementCount)
+	if options.PrebuildElementCount > 0 {
+		t.Logf("Prebuild complete: %d blocks", options.PrebuildElementCount)
+	}
+	t.Logf("Final distinct tree size: %d blocks", totalDistinctElements)
 
-	if val, ok := results["inserts"]; ok {
-		if inserts, ok := val.(InsertDeleteMetrics); ok {
-			t.Logf("Time taken: %v", inserts.Elapsed)
+	if inserts, ok := results["inserts"].(InsertDeleteMetrics); ok {
+		if options.MeasureExistingInserts {
+			t.Logf("Reinserted %d existing blocks", options.ElementCount)
+		} else {
+			t.Logf("Inserted %d new blocks during measured phase", options.ElementCount)
+		}
+		t.Logf("Time taken: %v", inserts.Elapsed)
+		if options.ElementCount > 0 {
 			t.Logf("Overall avg per block: %v", inserts.Elapsed/time.Duration(options.ElementCount))
 		}
+		t.Logf("Memory allocated: %.2f MB", inserts.AllocatedMB)
+		t.Logf("Total allocated (including GC'd): %.2f MB", inserts.TotalAllocMB)
+		t.Logf("Heap objects: %d", inserts.HeapObjects)
 	}
 
-	if val, ok := results["inclusionProof"]; ok {
-		if proofResult, ok := val.(InclusionExclusionProofResult); ok {
-			t.Logf("Average time for Inclusion Proof generation: %v", proofResult.avgProofTime)
-			t.Logf("Average Inclusion Proof size in bytes: %d", proofResult.avgProofSize)
-			t.Logf("Average time for Inclusion Proof verification: %v", proofResult.avgVerifyTime)
-		}
+	if proofResult, ok := results["inclusionProof"].(InclusionExclusionProofResult); ok {
+		t.Logf("Average time for Inclusion Proof generation: %v", proofResult.avgProofTime)
+		t.Logf("Average Inclusion Proof size in bytes: %d", proofResult.avgProofSize)
+		t.Logf("Average time for Inclusion Proof verification: %v", proofResult.avgVerifyTime)
 	}
 
-	if val, ok := results["inserts"]; ok {
-		if inserts, ok := val.(InsertDeleteMetrics); ok {
-			t.Logf("Memory allocated: %.2f MB", inserts.AllocatedMB)
-			t.Logf("Total allocated (including GC'd): %.2f MB", inserts.TotalAllocMB)
-			t.Logf("Heap objects: %d", inserts.HeapObjects)
+	if deletes, ok := results["deletes"].(InsertDeleteMetrics); ok {
+		t.Logf("Time taken [Deletes]: %v", deletes.Elapsed)
+		if len(collector.deleteKeys) > 0 {
+			t.Logf("Overall avg per block [Deletes]: %v", deletes.Elapsed/time.Duration(len(collector.deleteKeys)))
 		}
+		t.Logf("Memory allocated [Deletes]: %.2f MB", deletes.AllocatedMB)
+		t.Logf("Total allocated (including GC'd) [Deletes]: %.2f MB", deletes.TotalAllocMB)
+		t.Logf("Heap objects [Deletes]: %d", deletes.HeapObjects)
 	}
 
-	if val, ok := results["deletes"]; ok {
-		if deletes, ok := val.(InsertDeleteMetrics); ok {
-			t.Logf("Time taken [Deletes]: %v", deletes.Elapsed)
-			t.Logf("Overall avg per block [Deletes]: %v", deletes.Elapsed/time.Duration(options.DeleteCount))
-			t.Logf("Memory allocated [Deletes]: %.2f MB", deletes.AllocatedMB)
-			t.Logf("Total allocated (including GC'd) [Deletes]: %.2f MB", deletes.TotalAllocMB)
-			t.Logf("Heap objects [Deletes]: %d", deletes.HeapObjects)
-		}
-	}
-
-	if val, ok := results["exclusionProof"]; ok {
-		if proofResult, ok := val.(InclusionExclusionProofResult); ok {
-			t.Logf("Average time for Exclusion Proof generation: %v", proofResult.avgProofTime)
-			t.Logf("Average Exclusion Proof size in bytes: %d", proofResult.avgProofSize)
-			t.Logf("Average time for Exclusion Proof verification: %v", proofResult.avgVerifyTime)
-		}
+	if proofResult, ok := results["exclusionProof"].(InclusionExclusionProofResult); ok {
+		t.Logf("Average time for Exclusion Proof generation: %v", proofResult.avgProofTime)
+		t.Logf("Average Exclusion Proof size in bytes: %d", proofResult.avgProofSize)
+		t.Logf("Average time for Exclusion Proof verification: %v", proofResult.avgVerifyTime)
 	}
 
 	result := BenchmarkResult{
-		InsertElementCount: options.ElementCount,
+		TreeType:             treeType,
+		Scenario:             options.ScenarioName,
+		PrebuildElementCount: options.PrebuildElementCount,
+		FinalElementCount:    totalDistinctElements,
+		InsertElementCount:   options.ElementCount,
 	}
 
 	if inserts, ok := results["inserts"].(InsertDeleteMetrics); ok {
 		result.InsertionTime = inserts.Elapsed
-		result.AvgPerBlock = inserts.Elapsed / time.Duration(options.ElementCount)
+		if options.ElementCount > 0 {
+			result.AvgPerBlock = inserts.Elapsed / time.Duration(options.ElementCount)
+		}
 		result.MemoryAllocatedMB = inserts.AllocatedMB
 		result.TotalAllocatedMB = inserts.TotalAllocMB
 		result.HeapObjects = inserts.HeapObjects
 	}
 
 	if deletes, ok := results["deletes"].(InsertDeleteMetrics); ok {
-		result.DeleteElementCount = options.DeleteCount
+		result.DeleteElementCount = len(collector.deleteKeys)
 		result.DeletionTime = deletes.Elapsed
-		result.AvgDeletionPerBlock = deletes.Elapsed / time.Duration(options.DeleteCount)
+		if len(collector.deleteKeys) > 0 {
+			result.AvgDeletionPerBlock = deletes.Elapsed / time.Duration(len(collector.deleteKeys))
+		}
 		result.DeletesMemoryAllocatedMB = deletes.AllocatedMB
 		result.DeletesTotalAllocatedMB = deletes.TotalAllocMB
 		result.DeletesHeapObjects = deletes.HeapObjects
@@ -630,57 +995,17 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions) BenchmarkResult {
 }
 
 func TestWithProfile(t *testing.T, options *BenchmarkOptions, now time.Time) BenchmarkResult {
-	if !options.CPUProfile {
-		// Force GC between tests
-		runtime.GC()
-		time.Sleep(100 * time.Millisecond)
-		return runBenchmark(t, options)
-	}
-
-	currentDate := fmt.Sprintf("%02d-%02d-%d-%02d-%02d-%02d", now.Day(), now.Month(), now.Year(), now.Hour(), now.Minute(), now.Second())
-
-	dirPath := currentDate
-	err := os.MkdirAll(currentDate, 0755)
-	if err != nil {
-		panic(err)
-	}
-
-	filename := fmt.Sprintf("cpu_%dk_"+currentDate+".prof", options.ElementCount/1000)
-	// Force GC between tests
-	runtime.GC()
-	time.Sleep(100 * time.Millisecond)
-
-	cpuFile, err := os.Create(filepath.Join(dirPath, filename))
-	if err != nil {
-		t.Fatalf("failed to create CPU profile: %v", err)
-	}
-	defer cpuFile.Close()
-
-	if err := pprof.StartCPUProfile(cpuFile); err != nil {
-		t.Fatalf("failed to start CPU profile: %v", err)
-	}
-
-	result := runBenchmark(t, options)
-
-	pprof.StopCPUProfile()
-
-	runtime.GC()
-	heapFilename := fmt.Sprintf("heap_%dk_"+currentDate+".prof", options.ElementCount/1000)
-	heapFile, err := os.Create(filepath.Join(dirPath, heapFilename))
-	if err != nil {
-		t.Fatalf("failed to create heap profile: %v", err)
-	}
-	defer heapFile.Close()
-
-	if err := pprof.WriteHeapProfile(heapFile); err != nil {
-		t.Fatalf("failed to write heap profile: %v", err)
-	}
-
-	return result
+	normalizeBenchmarkOptions(options)
+	resetRuntimeState()
+	return runBenchmark(t, options, newBenchmarkProfiler(t, options, now))
 }
 
 func GetCounterHashFunc() func() utils.Hash {
-	counter := big.NewInt(0)
+	return GetCounterHashFuncFrom(0)
+}
+
+func GetCounterHashFuncFrom(start int64) func() utils.Hash {
+	counter := big.NewInt(start)
 	one := big.NewInt(1)
 
 	return func() utils.Hash {
