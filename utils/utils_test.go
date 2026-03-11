@@ -38,6 +38,23 @@ func TestEncodeCBORError(t *testing.T) {
 	}
 }
 
+func TestEncodeCBORUsesDeterministicEncoding(t *testing.T) {
+	value := map[string]int{"b": 1, "a": 2}
+
+	encoded, err := EncodeCBOR(value)
+	if err != nil {
+		t.Fatalf("EncodeCBOR error: %v", err)
+	}
+
+	// a2                map(2)
+	//    61 61 02       "a": 2
+	//    61 62 01       "b": 1
+	want := []byte{0xa2, 0x61, 0x61, 0x02, 0x61, 0x62, 0x01}
+	if !bytes.Equal(encoded, want) {
+		t.Fatalf("deterministic encoding mismatch: got %x want %x", encoded, want)
+	}
+}
+
 func TestDecodeCBORError(t *testing.T) {
 	_, err := DecodeCBOR[sampleStruct](CBORData{0xff})
 	if err == nil {
