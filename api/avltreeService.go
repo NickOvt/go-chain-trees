@@ -91,7 +91,7 @@ func (s *AVLHashTreeService) convertNodeToResponse(node *avlhashtree.Node) *Node
 
 	return &NodeResponse{
 		Key:         hex.EncodeToString(node.Key),
-		KeyDecoded:  decodeCBORToBestType(node.Key),
+		KeyDecoded:  decodeKeyToBestType(node.Key),
 		Data:        hex.EncodeToString(node.Data),
 		DataDecoded: decodeCBORToBestType(node.Data),
 		Height:      node.Height,
@@ -147,17 +147,7 @@ func (s *AVLHashTreeService) GetAVLHashTreeNode(c *gin.Context) {
 		return
 	}
 
-	keyCBOR, err := utils.EncodeCBOR(keyBytes)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error:   "encoding_error",
-			Message: "Failed to encode key",
-			Stack:   err.Error(),
-		})
-		return
-	}
-
-	node := findNodeByKey(s.AVLHashTree.Root, keyCBOR)
+	node := findNodeByKey(s.AVLHashTree.Root, utils.Hash(keyBytes))
 	if node == nil {
 		c.JSON(http.StatusNotFound, ErrorResponse{
 			Error:   "node_not_found",
@@ -190,11 +180,8 @@ func (s *AVLHashTreeService) InsertAVLHashTreeNode(c *gin.Context) {
 		return
 	}
 
-	// Convert key bytes to Hash type
-	keyHash := utils.Hash(keyBytes)
-
 	// Insert into tree
-	err = s.AVLHashTree.Insert(keyHash, req.Data)
+	err = s.AVLHashTree.Insert(keyBytes, req.Data)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error:   "insert_failed",
@@ -231,11 +218,8 @@ func (s *AVLHashTreeService) DeleteAVLHashTreeNode(c *gin.Context) {
 		return
 	}
 
-	// Convert key bytes to Hash type
-	keyHash := utils.Hash(keyBytes)
-
 	// Delete from tree
-	err = s.AVLHashTree.Delete(keyHash)
+	err = s.AVLHashTree.Delete(utils.Hash(keyBytes))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error:   "delete_failed",
@@ -284,17 +268,7 @@ func (s *AVLHashTreeService) GetAVLHashTreeProof(c *gin.Context) {
 		return
 	}
 
-	keyCBOR, err := utils.EncodeCBOR(keyBytes)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error:   "encoding_error",
-			Message: "Failed to encode key",
-			Stack:   err.Error(),
-		})
-		return
-	}
-
-	proof, err := s.AVLHashTree.GenerateInclusionExclusionProof(keyCBOR)
+	proof, err := s.AVLHashTree.GenerateInclusionExclusionProof(utils.Hash(keyBytes))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error:   "proof_generation_failed",
@@ -395,7 +369,7 @@ func (s *AVLHashTreeService) VerifyAVLHashTreeProof(c *gin.Context) {
 		}
 
 		nodes[i] = &avlhashtree.PublicCryptographicProofNode{
-			Key:                   keyBytes,
+			Key:                   utils.Hash(keyBytes),
 			Data:                  dataBytes,
 			NodeHash:              nodeHash,
 			LeftChildSubtreeHash:  leftHash,
@@ -405,7 +379,7 @@ func (s *AVLHashTreeService) VerifyAVLHashTreeProof(c *gin.Context) {
 
 	proof := &avlhashtree.PublicCryptographicProof{
 		RootHash:  rootHash,
-		TargetKey: targetKey,
+		TargetKey: utils.Hash(targetKey),
 		Found:     req.Found,
 		Path:      nodes,
 		Direction: req.Direction,
@@ -426,7 +400,7 @@ func (s *AVLHashTreeService) VerifyAVLHashTreeProof(c *gin.Context) {
 	})
 }
 
-func findNodeByKey(root *avlhashtree.Node, key utils.CBORData) *avlhashtree.Node {
+func findNodeByKey(root *avlhashtree.Node, key utils.Hash) *avlhashtree.Node {
 	for root != nil {
 		cmp := bytes.Compare(key, root.Key)
 
@@ -439,6 +413,10 @@ func findNodeByKey(root *avlhashtree.Node, key utils.CBORData) *avlhashtree.Node
 		}
 	}
 	return nil
+}
+
+func decodeKeyToBestType(key utils.Hash) any {
+	return hex.EncodeToString(key)
 }
 
 func decodeCBORToBestType(data utils.CBORData) any {
@@ -466,7 +444,7 @@ func convertPublicProofToResponse(proof *avlhashtree.PublicCryptographicProof, c
 	response := ProofResponse{
 		RootHash:         hex.EncodeToString(proof.RootHash),
 		TargetKey:        hex.EncodeToString(proof.TargetKey),
-		TargetKeyDecoded: decodeCBORToBestType(proof.TargetKey),
+		TargetKeyDecoded: decodeKeyToBestType(proof.TargetKey),
 		Found:            proof.Found,
 		Direction:        proof.Direction,
 		HashAlgo:         proof.HashAlgo,
@@ -483,7 +461,7 @@ func convertPublicProofToResponse(proof *avlhashtree.PublicCryptographicProof, c
 	for i, node := range proof.Path {
 		response.Path[i] = ProofNodeResponse{
 			Key:                   hex.EncodeToString(node.Key),
-			KeyDecoded:            decodeCBORToBestType(node.Key),
+			KeyDecoded:            decodeKeyToBestType(node.Key),
 			Data:                  hex.EncodeToString(node.Data),
 			DataDecoded:           decodeCBORToBestType(node.Data),
 			NodeHash:              hex.EncodeToString(node.NodeHash),

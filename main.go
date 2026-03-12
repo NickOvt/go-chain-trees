@@ -22,7 +22,7 @@ func main() {
 	keys := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 	for _, key := range keys {
-		err := avl.Insert(utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(key))), key)
+		err := avl.Insert([]byte(strconv.Itoa(key)), key)
 		if err != nil {
 			return
 		}
@@ -32,13 +32,10 @@ func main() {
 	// Print the final tree
 	avl.PrintTree()
 
-	search, _ := utils.EncodeCBOR(utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(4))))
+	searchCBOR, _ := utils.EncodeCBOR([]byte(strconv.Itoa(4)))
+	search := utils.GenerateHash(avl.HashAlgo, searchCBOR)
 
-	fmt.Println(fmt.Sprintf("%x|%x", search, utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(4)))))
-
-	aaa, _ := utils.DecodeCBOR[utils.Hash](search)
-
-	fmt.Println(fmt.Sprintf("%x", aaa))
+	fmt.Println(fmt.Sprintf("%x", search))
 
 	fmt.Println(avl.Search(search))
 
@@ -46,7 +43,8 @@ func main() {
 		fmt.Printf("Tree validation failed: %v\n", err)
 	}
 
-	search2, _ := utils.EncodeCBOR(utils.GenerateHash(avl.HashAlgo, []byte(strconv.Itoa(13))))
+	search2CBOR, _ := utils.EncodeCBOR([]byte(strconv.Itoa(13)))
+	search2 := utils.GenerateHash(avl.HashAlgo, search2CBOR)
 	inclusionProof, _ := avl.GenerateInclusionExclusionProof(search2)
 
 	proofCbor, _ := utils.EncodeCBOR(inclusionProof.ToPublicProof())

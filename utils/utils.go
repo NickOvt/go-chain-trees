@@ -15,8 +15,20 @@ type CBORData []byte
 // Hash represents a cryptographic hash as a byte slice
 type Hash []byte
 
+func mustDeterministicCBORMarshalMode() cbor.EncMode {
+	mode, err := cbor.CoreDetEncOptions().EncMode()
+	if err != nil {
+		panic(err)
+	}
+
+	return mode
+}
+
+var deterministicCBORMarshal = mustDeterministicCBORMarshalMode()
+
 // EncodeCBOR encodes any given value to CBOR format.
 // It accepts any type that can be marshaled to CBOR.
+// Encoding uses RFC 8949/7049bis core deterministic rules.
 //
 // Parameters:
 //   - v: The value to encode (can be any type)
@@ -25,7 +37,7 @@ type Hash []byte
 //   - CBORData: The CBOR-encoded data as bytes
 //   - error: An error if encoding fails, nil otherwise
 func EncodeCBOR(v any) (CBORData, error) {
-	b, err := cbor.Marshal(v)
+	b, err := deterministicCBORMarshal.Marshal(v)
 
 	if err != nil {
 		return nil, err

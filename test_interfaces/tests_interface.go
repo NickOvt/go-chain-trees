@@ -720,24 +720,34 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	switch treeType {
 	case AVLHASHTREE:
 		avl := avlhashtree.NewAVLHashTree(options.HashAlgo)
+		hashAVLKey := func(key utils.Hash) (utils.Hash, error) {
+			keyCBOR, err := utils.EncodeCBOR(key)
+			if err != nil {
+				return nil, err
+			}
+			return utils.GenerateHash(options.HashAlgo, keyCBOR), nil
+		}
 
 		insertFn = func(key utils.Hash, data []byte) error {
 			return avl.Insert(key, data)
 		}
 
 		deleteFn = func(key utils.Hash) error {
-			return avl.Delete(key)
+			hashedKey, err := hashAVLKey(key)
+			if err != nil {
+				return err
+			}
+			return avl.Delete(hashedKey)
 		}
 
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			keyCBOR, err := utils.EncodeCBOR(key)
+			proofKey, err := hashAVLKey(key)
 			if err != nil {
 				return 0, 0, 0, err
 			}
-
-			proof, err := avl.GenerateInclusionExclusionProof(keyCBOR)
+			proof, err := avl.GenerateInclusionExclusionProof(proofKey)
 			if err != nil {
 				return 0, 0, 0, err
 			}
