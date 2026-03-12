@@ -284,7 +284,7 @@ func TestSMT_RightSubtree_DuplicateInsert_AppendOnlyFalse_UpdatesNodeAndHashes(t
 		t.Fatalf("leaf data was not updated on duplicate insert")
 	}
 
-	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
+	expectedLeafHash := mustHashSMTNodeTuple(t, tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
 	if !bytes.Equal([]byte(leafAfter.Hash), []byte(expectedLeafHash)) {
 		t.Fatalf("updated leaf hash mismatch")
 	}

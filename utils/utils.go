@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"crypto/sha3"
 	"crypto/sha512"
+	"hash"
+	"io"
 	"math/bits"
 
 	"github.com/fxamacker/cbor/v2"
@@ -44,6 +46,12 @@ func EncodeCBOR(v any) (CBORData, error) {
 	}
 
 	return b, nil
+}
+
+// EncodeCBORToWriter encodes a value using deterministic CBOR directly into the
+// provided writer, avoiding an intermediate byte slice.
+func EncodeCBORToWriter(w io.Writer, v any) error {
+	return deterministicCBORMarshal.NewEncoder(w).Encode(v)
 }
 
 // DecodeCBOR decodes CBOR data into the specified type T.
@@ -124,6 +132,18 @@ var hashAlgoToHashAlgoOutputBitCount = map[HashAlgo]int{
 	SHA256: 256,
 	SHA384: 384,
 	SHA512: 512,
+}
+
+// NewHasher returns a streaming hasher for the requested hash algorithm.
+func NewHasher(hashAlgo HashAlgo) hash.Hash {
+	switch hashAlgo {
+	case SHA384:
+		return sha3.New384()
+	case SHA512:
+		return sha512.New()
+	default:
+		return sha256.New()
+	}
 }
 
 // GenerateHash generates a hash of the given byte data using specified HashAlgo.

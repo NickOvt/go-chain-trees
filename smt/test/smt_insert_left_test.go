@@ -288,7 +288,7 @@ func TestSMT_LeftSubtree_DuplicateInsert_AppendOnlyFalse_UpdatesNodeAndHashes(t 
 		t.Fatalf("leaf data was not updated on duplicate insert")
 	}
 
-	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
+	expectedLeafHash := mustHashSMTNodeTuple(t, tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
 	if !bytes.Equal([]byte(leafAfter.Hash), []byte(expectedLeafHash)) {
 		t.Fatalf("updated leaf hash mismatch")
 	}
@@ -509,6 +509,17 @@ func cloneBytes(data []byte) []byte {
 	return append([]byte(nil), data...)
 }
 
+func mustHashSMTNodeTuple(t *testing.T, hashAlgo utils.HashAlgo, values ...any) utils.Hash {
+	t.Helper()
+
+	encodedArray, err := utils.EncodeCBOR(values)
+	if err != nil {
+		t.Fatalf("failed to encode SMT node hash tuple: %v", err)
+	}
+
+	return utils.GenerateHash(hashAlgo, encodedArray)
+}
+
 func findLeafByKeyHash(node *smt.Node, keyHash []byte) *smt.Node {
 	if node == nil {
 		return nil
@@ -535,7 +546,7 @@ func assertHashesConsistentWithTreeImplementation(t *testing.T, node *smt.Node, 
 	}
 
 	if node.IsLeaf {
-		expected := utils.ConcatDataAndGenerateCombinedHash(hashAlgo, node.Path.Encode(), node.Data)
+		expected := mustHashSMTNodeTuple(t, hashAlgo, node.Path.Encode(), node.Data)
 		if !bytes.Equal([]byte(node.Hash), []byte(expected)) {
 			t.Fatalf("leaf hash mismatch for node key %x", []byte(node.Key))
 		}
@@ -545,12 +556,7 @@ func assertHashesConsistentWithTreeImplementation(t *testing.T, node *smt.Node, 
 	assertHashesConsistentWithTreeImplementation(t, node.LeftNode, hashAlgo)
 	assertHashesConsistentWithTreeImplementation(t, node.RightNode, hashAlgo)
 
-	expected := utils.ConcatDataAndGenerateCombinedHash(
-		hashAlgo,
-		node.Path.Encode(),
-		node.GetLeftNode().GetHash(),
-		node.GetRightNode().GetHash(),
-	)
+	expected := mustHashSMTNodeTuple(t, hashAlgo, node.Path.Encode(), node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
 
 	if !bytes.Equal([]byte(node.Hash), []byte(expected)) {
 		t.Fatalf("branch hash mismatch for path %x", node.Path.Encode())

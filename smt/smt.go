@@ -221,15 +221,6 @@ func pathCommonPrefixLenAt(a *Path, aOffset int, b *Path, bOffset int) int {
 	return prefixLen
 }
 
-func pathCommonPrefix(a, b *Path) (*Path, int) {
-	prefixLen := pathCommonPrefixLenAt(a, 0, b, 0)
-	if prefixLen == 0 {
-		return newPathFromBigInt(nil, 0), 0
-	}
-
-	return pathSlice(a, 0, prefixLen), prefixLen
-}
-
 func encodePath(path *Path) []byte {
 	if path == nil {
 		return nil
@@ -307,8 +298,24 @@ func pathToRawBits(path *Path) string {
 	return sb.String()
 }
 
-func nodePathBytes(path *Path) []byte {
-	return encodePath(path)
+// SMT node hashes are the hash of a deterministic CBOR array so path and payload
+// boundaries are part of the hashed structure instead of relying on byte concatenation.
+func hashNodeCBORArray(hashAlgo utils.HashAlgo, values ...any) utils.Hash {
+	hasher := utils.NewHasher(hashAlgo)
+	err := utils.EncodeCBORToWriter(hasher, values)
+	if err != nil {
+		panic(fmt.Sprintf("smt: failed to encode node hash values: %v", err))
+	}
+
+	return hasher.Sum(nil)
+}
+
+func calculateLeafNodeHash(hashAlgo utils.HashAlgo, encodedPath []byte, data utils.CBORData) utils.Hash {
+	return hashNodeCBORArray(hashAlgo, encodedPath, data)
+}
+
+func calculateBranchNodeHash(hashAlgo utils.HashAlgo, encodedPath []byte, leftHash, rightHash utils.Hash) utils.Hash {
+	return hashNodeCBORArray(hashAlgo, encodedPath, leftHash, rightHash)
 }
 
 func EncodePath(data []byte, depth int) ([]byte, int) {
@@ -341,24 +348,16 @@ func CalculateKeyFromPath(encodedPath []byte) ([]byte, int) {
 	return decoded, pathBitLen(path)
 }
 
-// EncodeKeyBitsAsPath encodes traversal-order bits into canonical SMT path bytes.
-func EncodeKeyBitsAsPath(keyBits []byte, meaningfulBits int) []byte {
-	encoded, _ := EncodePath(keyBits, meaningfulBits)
-	return encoded
-}
-
 type SMT struct {
-	HashAlgo       utils.HashAlgo
-	Root           *Node
-	emptyHashCache map[int]utils.Hash
-	emptyHash      utils.Hash
-	AppendOnly     bool
+	HashAlgo   utils.HashAlgo
+	Root       *Node
+	AppendOnly bool
 }
 
 type Node struct {
 	Key       utils.Hash     // Key of node (will be hashed by the tree hashAlgo), nil for branch node
 	Data      utils.CBORData // in case of a non-leaf node it will be nil
-	Hash      utils.Hash     // present on every node. hash(path, data), for branch nodes hash(path, leftHash, rightHash)
+	Hash      utils.Hash     // present on every node. hash(CBOR[path, data]), for branch nodes hash(CBOR[path, leftHash, rightHash])
 	Path      *Path          // nil only for root node
 	LeftNode  *Node          // For branch nodes
 	RightNode *Node          // For branch nodes
@@ -560,8 +559,8 @@ func (t *SMT) verifyLeafPathMatchesLeafKey(proof *InclusionExclusionProof) error
 		return fmt.Errorf("calculated leaf path bit length %d does not match key bit length %d", pathBitLen(fullPath), keyBitLen)
 	}
 
-	leaf, err := t.findLeafByFullPath(fullPath)
-	if err != nil {
+	leaf, findLeafErr := t.findLeafByFullPath(fullPath)
+	if findLeafErr != nil {
 		return err
 	}
 	if len(leaf.Key) == 0 {
@@ -584,7 +583,7 @@ func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclu
 		return nil, fmt.Errorf("first proof node must contain leaf data for inclusion verification")
 	}
 
-	currentHash := utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[0].Path, proof.Path[0].Data)
+	currentHash := calculateLeafNodeHash(hashAlgo, proof.Path[0].Path, proof.Path[0].Data)
 
 	for i := 1; i < len(proof.Path); i++ {
 		if proof.Path[i] == nil {
@@ -597,9 +596,9 @@ func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclu
 		}
 
 		if firstBit {
-			currentHash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
+			currentHash = calculateBranchNodeHash(hashAlgo, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
 		} else {
-			currentHash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
+			currentHash = calculateBranchNodeHash(hashAlgo, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
 		}
 	}
 
@@ -641,7 +640,7 @@ func (node *Node) CalculateLeafHash(hashAlgo utils.HashAlgo) {
 		return
 	}
 
-	node.Hash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, nodePathBytes(node.Path), node.Data)
+	node.Hash = calculateLeafNodeHash(hashAlgo, encodePath(node.Path), node.Data)
 }
 
 func (node *Node) CalculateBranchHash(hashAlgo utils.HashAlgo) {
@@ -649,7 +648,7 @@ func (node *Node) CalculateBranchHash(hashAlgo utils.HashAlgo) {
 		return
 	}
 
-	node.Hash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, nodePathBytes(node.Path), node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
+	node.Hash = calculateBranchNodeHash(hashAlgo, encodePath(node.Path), node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
 }
 
 func NewSMT(hashAlgo utils.HashAlgo, appendOnly bool) *SMT {
@@ -659,22 +658,16 @@ func NewSMT(hashAlgo utils.HashAlgo, appendOnly bool) *SMT {
 }
 
 func (t *SMT) Init() {
-	if t.emptyHash == nil {
-		t.emptyHash = utils.GenerateNullHash(t.HashAlgo)
-	}
-
 	// set initial values
 	rootNode := &Node{
 		Data:      nil,
 		LeftNode:  nil,
 		RightNode: nil,
 		Path:      nil,
-		Hash:      utils.ConcatHashesAndGenerateHash(t.HashAlgo, nil, nil, nil),
+		Hash:      calculateBranchNodeHash(t.HashAlgo, encodePath(nil), nil, nil),
 		IsLeaf:    false,
 	}
 	t.Root = rootNode
-
-	t.emptyHashCache = make(map[int]utils.Hash)
 }
 
 func (t *SMT) GetRoot() *Node {
@@ -684,7 +677,7 @@ func (t *SMT) GetRoot() *Node {
 			LeftNode:  nil,
 			RightNode: nil,
 			Path:      nil,
-			Hash:      utils.ConcatHashesAndGenerateHash(t.HashAlgo, nil, nil, nil),
+			Hash:      calculateBranchNodeHash(t.HashAlgo, encodePath(nil), nil, nil),
 			IsLeaf:    false,
 		}
 		t.Root = rootNode
@@ -818,15 +811,6 @@ func decodePathToRawBits(path *Path) string {
 	return pathToRawBits(path)
 }
 
-// ChooseNewKey Returns both the key and the number of meaningful bits for correct comparison.
-func ChooseNewKey(originalKeyHash utils.Hash, newEncodedPath []byte) ([]byte, int) {
-	if newEncodedPath == nil || len(newEncodedPath) == 0 {
-		return originalKeyHash, len(originalKeyHash) * 8
-	}
-
-	return CalculateKeyFromPath(newEncodedPath)
-}
-
 func chooseNewPath(originalKeyHash utils.Hash, newPath *Path) *Path {
 	if newPath == nil {
 		return pathFromKeyBytes(originalKeyHash, len(originalKeyHash)*8)
@@ -836,14 +820,14 @@ func chooseNewPath(originalKeyHash utils.Hash, newPath *Path) *Path {
 
 func newLeafNode(hashAlgo utils.HashAlgo, keyHash utils.Hash, data utils.CBORData, path *Path) *Node {
 	leafPath := clonePath(path)
-	encodedPath := nodePathBytes(leafPath)
+	encodedPath := encodePath(leafPath)
 
 	return &Node{
 		Data:      data,
 		LeftNode:  nil,
 		RightNode: nil,
 		Path:      leafPath,
-		Hash:      utils.ConcatDataAndGenerateCombinedHash(hashAlgo, encodedPath, data),
+		Hash:      calculateLeafNodeHash(hashAlgo, encodedPath, data),
 		IsLeaf:    true,
 		Key:       slices.Clone(keyHash),
 	}
@@ -1087,11 +1071,11 @@ func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionPr
 	currNode := rootNode
 	pathMismatch := false
 
-	for i < keyBitSize && currNode != nil && !currNode.IsLeaf {
+	for i < keyBitSize && !currNode.IsLeaf {
 		goLeft := pathBit(fullKeyPath, i) == 0
 
 		proofNode := &ProofNode{
-			Path: nodePathBytes(currNode.Path),
+			Path: encodePath(currNode.Path),
 			Data: nil,
 		}
 
@@ -1128,13 +1112,13 @@ func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionPr
 	if currNode != nil {
 		if currNode.IsLeaf {
 			proof.Path = append(proof.Path, &ProofNode{
-				Path: nodePathBytes(currNode.Path),
+				Path: encodePath(currNode.Path),
 				Hash: nil,
 				Data: currNode.Data,
 			})
 		} else if pathMismatch || i >= keyBitSize {
 			proof.Path = append(proof.Path, &ProofNode{
-				Path: nodePathBytes(currNode.Path),
+				Path: encodePath(currNode.Path),
 				Hash: currNode.Hash,
 				Data: nil,
 			})
