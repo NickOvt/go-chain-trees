@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash"
 	"io"
 	"math/big"
 	"os"
@@ -300,8 +301,10 @@ func pathToRawBits(path *Path) string {
 
 // SMT node hashes are the hash of a deterministic CBOR array so path and payload
 // boundaries are part of the hashed structure instead of relying on byte concatenation.
-func hashNodeCBORArray(hashAlgo utils.HashAlgo, values ...any) utils.Hash {
-	hasher := utils.NewHasher(hashAlgo)
+func hashNodeCBORArray(hasher hash.Hash, values ...any) utils.Hash {
+	hasher.Reset()
+	defer hasher.Reset()
+
 	err := utils.EncodeCBORToWriter(hasher, values)
 	if err != nil {
 		panic(fmt.Sprintf("smt: failed to encode node hash values: %v", err))
@@ -310,12 +313,12 @@ func hashNodeCBORArray(hashAlgo utils.HashAlgo, values ...any) utils.Hash {
 	return hasher.Sum(nil)
 }
 
-func calculateLeafNodeHash(hashAlgo utils.HashAlgo, encodedPath []byte, data utils.CBORData) utils.Hash {
-	return hashNodeCBORArray(hashAlgo, encodedPath, data)
+func calculateLeafNodeHash(hasher hash.Hash, encodedPath []byte, data utils.CBORData) utils.Hash {
+	return hashNodeCBORArray(hasher, encodedPath, data)
 }
 
-func calculateBranchNodeHash(hashAlgo utils.HashAlgo, encodedPath []byte, leftHash, rightHash utils.Hash) utils.Hash {
-	return hashNodeCBORArray(hashAlgo, encodedPath, leftHash, rightHash)
+func calculateBranchNodeHash(hasher hash.Hash, encodedPath []byte, leftHash, rightHash utils.Hash) utils.Hash {
+	return hashNodeCBORArray(hasher, encodedPath, leftHash, rightHash)
 }
 
 func EncodePath(data []byte, depth int) ([]byte, int) {
@@ -352,6 +355,7 @@ type SMT struct {
 	HashAlgo   utils.HashAlgo
 	Root       *Node
 	AppendOnly bool
+	hasher     hash.Hash
 }
 
 type Node struct {
@@ -453,7 +457,7 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 		return false, fmt.Errorf("given proof document contains invalid root hash")
 	}
 
-	recomputedRoot, err := recomputeRootFromProofBySpec(t.HashAlgo, proof)
+	recomputedRoot, err := recomputeRootFromProofBySpec(t.getHasher(), proof)
 	if err != nil {
 		return false, err
 	}
@@ -575,7 +579,7 @@ func (t *SMT) verifyLeafPathMatchesLeafKey(proof *InclusionExclusionProof) error
 	return nil
 }
 
-func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclusionProof) (utils.Hash, error) {
+func recomputeRootFromProofBySpec(hasher hash.Hash, proof *InclusionExclusionProof) (utils.Hash, error) {
 	if proof == nil || len(proof.Path) == 0 {
 		return nil, fmt.Errorf("cannot recompute root from empty proof")
 	}
@@ -583,7 +587,7 @@ func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclu
 		return nil, fmt.Errorf("first proof node must contain leaf data for inclusion verification")
 	}
 
-	currentHash := calculateLeafNodeHash(hashAlgo, proof.Path[0].Path, proof.Path[0].Data)
+	currentHash := calculateLeafNodeHash(hasher, proof.Path[0].Path, proof.Path[0].Data)
 
 	for i := 1; i < len(proof.Path); i++ {
 		if proof.Path[i] == nil {
@@ -596,9 +600,9 @@ func recomputeRootFromProofBySpec(hashAlgo utils.HashAlgo, proof *InclusionExclu
 		}
 
 		if firstBit {
-			currentHash = calculateBranchNodeHash(hashAlgo, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
+			currentHash = calculateBranchNodeHash(hasher, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
 		} else {
-			currentHash = calculateBranchNodeHash(hashAlgo, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
+			currentHash = calculateBranchNodeHash(hasher, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
 		}
 	}
 
@@ -635,26 +639,34 @@ func (node *Node) GetHash() utils.Hash {
 	return node.Hash
 }
 
-func (node *Node) CalculateLeafHash(hashAlgo utils.HashAlgo) {
+func (node *Node) CalculateLeafHash(hasher hash.Hash) {
 	if node == nil {
 		return
 	}
 
-	node.Hash = calculateLeafNodeHash(hashAlgo, encodePath(node.Path), node.Data)
+	node.Hash = calculateLeafNodeHash(hasher, encodePath(node.Path), node.Data)
 }
 
-func (node *Node) CalculateBranchHash(hashAlgo utils.HashAlgo) {
+func (node *Node) CalculateBranchHash(hasher hash.Hash) {
 	if node == nil {
 		return
 	}
 
-	node.Hash = calculateBranchNodeHash(hashAlgo, encodePath(node.Path), node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
+	node.Hash = calculateBranchNodeHash(hasher, encodePath(node.Path), node.GetLeftNode().GetHash(), node.GetRightNode().GetHash())
 }
 
 func NewSMT(hashAlgo utils.HashAlgo, appendOnly bool) *SMT {
-	smt := &SMT{HashAlgo: hashAlgo, AppendOnly: appendOnly}
+	smt := &SMT{HashAlgo: hashAlgo, AppendOnly: appendOnly, hasher: utils.NewHasher(hashAlgo)}
 	smt.Init()
 	return smt
+}
+
+func (t *SMT) getHasher() hash.Hash {
+	if t.hasher == nil {
+		t.hasher = utils.NewHasher(t.HashAlgo)
+	}
+
+	return t.hasher
 }
 
 func (t *SMT) Init() {
@@ -664,7 +676,7 @@ func (t *SMT) Init() {
 		LeftNode:  nil,
 		RightNode: nil,
 		Path:      nil,
-		Hash:      calculateBranchNodeHash(t.HashAlgo, encodePath(nil), nil, nil),
+		Hash:      calculateBranchNodeHash(t.getHasher(), encodePath(nil), nil, nil),
 		IsLeaf:    false,
 	}
 	t.Root = rootNode
@@ -677,7 +689,7 @@ func (t *SMT) GetRoot() *Node {
 			LeftNode:  nil,
 			RightNode: nil,
 			Path:      nil,
-			Hash:      calculateBranchNodeHash(t.HashAlgo, encodePath(nil), nil, nil),
+			Hash:      calculateBranchNodeHash(t.getHasher(), encodePath(nil), nil, nil),
 			IsLeaf:    false,
 		}
 		t.Root = rootNode
@@ -818,7 +830,7 @@ func chooseNewPath(originalKeyHash utils.Hash, newPath *Path) *Path {
 	return clonePath(newPath)
 }
 
-func newLeafNode(hashAlgo utils.HashAlgo, keyHash utils.Hash, data utils.CBORData, path *Path) *Node {
+func newLeafNode(hasher hash.Hash, keyHash utils.Hash, data utils.CBORData, path *Path) *Node {
 	leafPath := clonePath(path)
 	encodedPath := encodePath(leafPath)
 
@@ -827,21 +839,21 @@ func newLeafNode(hashAlgo utils.HashAlgo, keyHash utils.Hash, data utils.CBORDat
 		LeftNode:  nil,
 		RightNode: nil,
 		Path:      leafPath,
-		Hash:      calculateLeafNodeHash(hashAlgo, encodedPath, data),
+		Hash:      calculateLeafNodeHash(hasher, encodedPath, data),
 		IsLeaf:    true,
 		Key:       slices.Clone(keyHash),
 	}
 }
 
-func recalculateNodeHash(node *Node, hashAlgo utils.HashAlgo) {
+func recalculateNodeHash(node *Node, hasher hash.Hash) {
 	if node == nil {
 		return
 	}
 	if node.IsLeaf {
-		node.CalculateLeafHash(hashAlgo)
+		node.CalculateLeafHash(hasher)
 		return
 	}
-	node.CalculateBranchHash(hashAlgo)
+	node.CalculateBranchHash(hasher)
 }
 
 func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newPath *Path, appendOnly bool) (*Node, error) {
@@ -867,12 +879,13 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 		return nil, fmt.Errorf("cannot insert with exhausted path")
 	}
 
+	hasher := t.getHasher()
 	goLeft := pathBit(chosenPath, pathOffset) == 0
 
 	if goLeft {
 		if currentRoot.LeftNode == nil {
-			currentRoot.LeftNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, pathCutPrefix(chosenPath, pathOffset))
-			currentRoot.CalculateBranchHash(t.HashAlgo)
+			currentRoot.LeftNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, pathCutPrefix(chosenPath, pathOffset))
+			currentRoot.CalculateBranchHash(hasher)
 			return currentRoot, nil
 		}
 
@@ -882,8 +895,8 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 					return nil, fmt.Errorf("duplicate key insert in append-only mode")
 				}
 				currentRoot.LeftNode.Data = nodeDataCbor
-				currentRoot.LeftNode.CalculateLeafHash(t.HashAlgo)
-				currentRoot.CalculateBranchHash(t.HashAlgo)
+				currentRoot.LeftNode.CalculateLeafHash(hasher)
+				currentRoot.CalculateBranchHash(hasher)
 				return currentRoot, nil
 			}
 
@@ -904,19 +917,19 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 			oldNodePath := pathCutPrefix(existingPath, commonPrefixLen)
 
 			currentRoot.LeftNode.Path = oldNodePath
-			currentRoot.LeftNode.CalculateLeafHash(t.HashAlgo)
+			currentRoot.LeftNode.CalculateLeafHash(hasher)
 
 			if pathBit(existingPath, commonPrefixLen) == 1 {
 				branchNode.RightNode = currentRoot.LeftNode
-				branchNode.LeftNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+				branchNode.LeftNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 			} else {
 				branchNode.LeftNode = currentRoot.LeftNode
-				branchNode.RightNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+				branchNode.RightNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 			}
 
-			branchNode.CalculateBranchHash(t.HashAlgo)
+			branchNode.CalculateBranchHash(hasher)
 			currentRoot.LeftNode = branchNode
-			currentRoot.CalculateBranchHash(t.HashAlgo)
+			currentRoot.CalculateBranchHash(hasher)
 			return currentRoot, nil
 		}
 
@@ -927,7 +940,7 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 			if _, err := t.insertPrepared(currentRoot.LeftNode, chosenPath, pathOffset+commonPrefixLen, nodeKeyHash, nodeDataCbor, appendOnly); err != nil {
 				return nil, err
 			}
-			currentRoot.CalculateBranchHash(t.HashAlgo)
+			currentRoot.CalculateBranchHash(hasher)
 			return currentRoot, nil
 		}
 
@@ -945,25 +958,25 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 		oldBranchPath := pathCutPrefix(existingPath, commonPrefixLen)
 
 		currentRoot.LeftNode.Path = oldBranchPath
-		recalculateNodeHash(currentRoot.LeftNode, t.HashAlgo)
+		recalculateNodeHash(currentRoot.LeftNode, hasher)
 
 		if pathBit(existingPath, commonPrefixLen) == 1 {
 			newBranchNode.RightNode = currentRoot.LeftNode
-			newBranchNode.LeftNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+			newBranchNode.LeftNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 		} else {
 			newBranchNode.LeftNode = currentRoot.LeftNode
-			newBranchNode.RightNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+			newBranchNode.RightNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 		}
 
-		newBranchNode.CalculateBranchHash(t.HashAlgo)
+		newBranchNode.CalculateBranchHash(hasher)
 		currentRoot.LeftNode = newBranchNode
-		currentRoot.CalculateBranchHash(t.HashAlgo)
+		currentRoot.CalculateBranchHash(hasher)
 		return currentRoot, nil
 	}
 
 	if currentRoot.RightNode == nil {
-		currentRoot.RightNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, pathCutPrefix(chosenPath, pathOffset))
-		currentRoot.CalculateBranchHash(t.HashAlgo)
+		currentRoot.RightNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, pathCutPrefix(chosenPath, pathOffset))
+		currentRoot.CalculateBranchHash(hasher)
 		return currentRoot, nil
 	}
 
@@ -973,8 +986,8 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 				return nil, fmt.Errorf("duplicate key insert in append-only mode")
 			}
 			currentRoot.RightNode.Data = nodeDataCbor
-			currentRoot.RightNode.CalculateLeafHash(t.HashAlgo)
-			currentRoot.CalculateBranchHash(t.HashAlgo)
+			currentRoot.RightNode.CalculateLeafHash(hasher)
+			currentRoot.CalculateBranchHash(hasher)
 			return currentRoot, nil
 		}
 
@@ -995,19 +1008,19 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 		oldNodePath := pathCutPrefix(existingPath, commonPrefixLen)
 
 		currentRoot.RightNode.Path = oldNodePath
-		currentRoot.RightNode.CalculateLeafHash(t.HashAlgo)
+		currentRoot.RightNode.CalculateLeafHash(hasher)
 
 		if pathBit(existingPath, commonPrefixLen) == 1 {
 			branchNode.RightNode = currentRoot.RightNode
-			branchNode.LeftNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+			branchNode.LeftNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 		} else {
 			branchNode.LeftNode = currentRoot.RightNode
-			branchNode.RightNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+			branchNode.RightNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 		}
 
-		branchNode.CalculateBranchHash(t.HashAlgo)
+		branchNode.CalculateBranchHash(hasher)
 		currentRoot.RightNode = branchNode
-		currentRoot.CalculateBranchHash(t.HashAlgo)
+		currentRoot.CalculateBranchHash(hasher)
 		return currentRoot, nil
 	}
 
@@ -1018,7 +1031,7 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 		if _, err := t.insertPrepared(currentRoot.RightNode, chosenPath, pathOffset+commonPrefixLen, nodeKeyHash, nodeDataCbor, appendOnly); err != nil {
 			return nil, err
 		}
-		currentRoot.CalculateBranchHash(t.HashAlgo)
+		currentRoot.CalculateBranchHash(hasher)
 		return currentRoot, nil
 	}
 
@@ -1036,19 +1049,19 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 	oldBranchPath := pathCutPrefix(existingPath, commonPrefixLen)
 
 	currentRoot.RightNode.Path = oldBranchPath
-	recalculateNodeHash(currentRoot.RightNode, t.HashAlgo)
+	recalculateNodeHash(currentRoot.RightNode, hasher)
 
 	if pathBit(existingPath, commonPrefixLen) == 1 {
 		newBranchNode.RightNode = currentRoot.RightNode
-		newBranchNode.LeftNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+		newBranchNode.LeftNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 	} else {
 		newBranchNode.LeftNode = currentRoot.RightNode
-		newBranchNode.RightNode = newLeafNode(t.HashAlgo, nodeKeyHash, nodeDataCbor, newNodePath)
+		newBranchNode.RightNode = newLeafNode(hasher, nodeKeyHash, nodeDataCbor, newNodePath)
 	}
 
-	newBranchNode.CalculateBranchHash(t.HashAlgo)
+	newBranchNode.CalculateBranchHash(hasher)
 	currentRoot.RightNode = newBranchNode
-	currentRoot.CalculateBranchHash(t.HashAlgo)
+	currentRoot.CalculateBranchHash(hasher)
 
 	return currentRoot, nil
 }
