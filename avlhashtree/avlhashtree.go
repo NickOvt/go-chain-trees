@@ -222,7 +222,7 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 }
 
 // Insert data into the AVL Hash Tree.
-// The provided raw key bytes are CBOR-encoded and then hashed using the tree hash algorithm.
+// The provided key bytes are hashed as-is using the tree hash algorithm.
 // Data is converted to CBOR before inserting.
 //
 // Params:
@@ -232,19 +232,13 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 // Returns:
 //   - nil
 func (t *AVLHashTree) Insert(key []byte, data any) error {
-	keyCBOR, err := utils.EncodeCBOR(key)
-	if err != nil {
-		return err
-	}
-
-	return t.InsertCBOR(keyCBOR, data)
+	return t.InsertHashed(utils.GenerateHash(t.HashAlgo, key), data)
 }
 
-// InsertCBOR inserts data using a key that is already CBOR-encoded.
-// The provided CBOR key bytes are hashed using the tree hash algorithm before being stored.
+// InsertCBOR inserts data using key bytes that may already be a CBOR encoding.
+// The provided bytes are hashed as-is; they are not CBOR-wrapped again before hashing.
 func (t *AVLHashTree) InsertCBOR(keyCBOR utils.CBORData, data any) error {
-	hashedKey := utils.GenerateHash(t.HashAlgo, keyCBOR)
-	return t.InsertHashed(hashedKey, data)
+	return t.InsertHashed(utils.GenerateHash(t.HashAlgo, keyCBOR), data)
 }
 
 // InsertHashed inserts data using an already-hashed key.
