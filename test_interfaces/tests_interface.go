@@ -534,7 +534,7 @@ func buildSelectionIndices(totalCount int, selectionCount int, sequential bool) 
 }
 
 func newDataGenerator(dataSize int, counterStart int64) func() []byte {
-	dataHashFn := GetCounterHashFuncFrom(counterStart)
+	dataHashFn := GetCounterKeyFuncFrom(counterStart)
 
 	return func() []byte {
 		data := make([]byte, dataSize)
@@ -720,34 +720,19 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	switch treeType {
 	case AVLHASHTREE:
 		avl := avlhashtree.NewAVLHashTree(options.HashAlgo)
-		hashAVLKey := func(key utils.Hash) (utils.Hash, error) {
-			keyCBOR, err := utils.EncodeCBOR(key)
-			if err != nil {
-				return nil, err
-			}
-			return utils.GenerateHash(options.HashAlgo, keyCBOR), nil
-		}
 
 		insertFn = func(key utils.Hash, data []byte) error {
 			return avl.Insert(key, data)
 		}
 
 		deleteFn = func(key utils.Hash) error {
-			hashedKey, err := hashAVLKey(key)
-			if err != nil {
-				return err
-			}
-			return avl.Delete(hashedKey)
+			return avl.DeleteByKey(key)
 		}
 
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			proofKey, err := hashAVLKey(key)
-			if err != nil {
-				return 0, 0, 0, err
-			}
-			proof, err := avl.GenerateInclusionExclusionProof(proofKey)
+			proof, err := avl.GenerateInclusionExclusionProofByKey(key)
 			if err != nil {
 				return 0, 0, 0, err
 			}
@@ -827,7 +812,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		t.Logf("SMT append-only mode: %v", !options.DisableSMTAppendOnly)
 	}
 
-	sampleHashFn := GetCounterHashFunc()
+	sampleKeyFn := GetCounterKeyFunc()
 	nextInsertData := newDataGenerator(options.DataSizeBytes, 0)
 	nextExistingInsertData := newDataGenerator(options.DataSizeBytes, int64(totalDistinctElements))
 
@@ -862,7 +847,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 
 	if options.PrebuildElementCount > 0 {
 		t.Logf("Prebuilding %d blocks before measurement", options.PrebuildElementCount)
-		if _, err := runFreshInsertBatch(options.PrebuildElementCount, &globalIndex, sampleHashFn, nextInsertData, insertFn, collector, false); err != nil {
+		if _, err := runFreshInsertBatch(options.PrebuildElementCount, &globalIndex, sampleKeyFn, nextInsertData, insertFn, collector, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -883,9 +868,9 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		)
 
 		if options.MeasureExistingInserts {
-			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, GetCounterHashFunc(), nextExistingInsertData, insertFn)
+			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, GetCounterKeyFunc(), nextExistingInsertData, insertFn)
 		} else {
-			insertMetrics, err = runFreshInsertBatch(options.ElementCount, &globalIndex, sampleHashFn, nextInsertData, insertFn, collector, true)
+			insertMetrics, err = runFreshInsertBatch(options.ElementCount, &globalIndex, sampleKeyFn, nextInsertData, insertFn, collector, true)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -909,7 +894,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	if options.IncludeExclusionProof {
 		exclusionKeys := make([]utils.Hash, proofSampleSize)
 		for idx := range proofSampleSize {
-			exclusionKeys[idx] = sampleHashFn()
+			exclusionKeys[idx] = sampleKeyFn()
 		}
 		results["exclusionProof"] = measureProofBatch(t, exclusionKeys, proveAndVerifyFn)
 	}
@@ -1010,11 +995,11 @@ func TestWithProfile(t *testing.T, options *BenchmarkOptions, now time.Time) Ben
 	return runBenchmark(t, options, newBenchmarkProfiler(t, options, now))
 }
 
-func GetCounterHashFunc() func() utils.Hash {
-	return GetCounterHashFuncFrom(0)
+func GetCounterKeyFunc() func() utils.Hash {
+	return GetCounterKeyFuncFrom(0)
 }
 
-func GetCounterHashFuncFrom(start int64) func() utils.Hash {
+func GetCounterKeyFuncFrom(start int64) func() utils.Hash {
 	counter := big.NewInt(start)
 	one := big.NewInt(1)
 

@@ -108,6 +108,32 @@ func TestGenerateHash(t *testing.T) {
 	}
 }
 
+func TestDataHasherSumToMatchesCBORHash(t *testing.T) {
+	dataHasher := NewDataHasher(SHA256)
+
+	expectedCBOR, err := EncodeCBOR([]any{[]byte("alpha"), nil, []byte("beta")})
+	if err != nil {
+		t.Fatalf("EncodeCBOR error: %v", err)
+	}
+
+	expected := GenerateHash(SHA256, expectedCBOR)
+	got := dataHasher.SumTo(nil, []byte("alpha"), nil, []byte("beta"))
+	if !bytes.Equal(got, expected) {
+		t.Fatalf("DataHasher.SumTo mismatch: got %x want %x", got, expected)
+	}
+
+	expectedCBOR, err = EncodeCBOR([]any{[]byte("gamma"), []byte("delta")})
+	if err != nil {
+		t.Fatalf("EncodeCBOR error: %v", err)
+	}
+
+	expected = GenerateHash(SHA256, expectedCBOR)
+	got = dataHasher.SumTo(got[:0], []byte("gamma"), []byte("delta"))
+	if !bytes.Equal(got, expected) {
+		t.Fatalf("DataHasher.SumTo reuse mismatch: got %x want %x", got, expected)
+	}
+}
+
 func TestGenerateNullHash(t *testing.T) {
 	expected := sha256.Sum256(nil)
 	got := GenerateNullHash("unknown")

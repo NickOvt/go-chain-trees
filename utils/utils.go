@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha3"
 	"crypto/sha512"
+	"encoding/binary"
 	"hash"
 	"io"
 
@@ -143,6 +144,58 @@ func NewHasher(hashAlgo HashAlgo) hash.Hash {
 	default:
 		return sha256.New()
 	}
+}
+
+type DataHasher struct {
+	hasher  hash.Hash
+	scratch []byte
+}
+
+func NewDataHasher(hashAlgo HashAlgo) *DataHasher {
+	return &DataHasher{hasher: NewHasher(hashAlgo)}
+}
+
+func appendCBORMajorTypeHeader(dst []byte, major byte, value int) []byte {
+	switch {
+	case value <= 23:
+		return append(dst, byte(major<<5)|byte(value))
+	case value <= 0xff:
+		return append(dst, byte(major<<5)|24, byte(value))
+	case value <= 0xffff:
+		dst = append(dst, byte(major<<5)|25)
+		return binary.BigEndian.AppendUint16(dst, uint16(value))
+	case uint64(value) <= 0xffffffff:
+		dst = append(dst, byte(major<<5)|26)
+		return binary.BigEndian.AppendUint32(dst, uint32(value))
+	default:
+		dst = append(dst, byte(major<<5)|27)
+		return binary.BigEndian.AppendUint64(dst, uint64(value))
+	}
+}
+
+// SumTo hashes a deterministic CBOR array whose elements are byte strings or nil.
+func (h *DataHasher) SumTo(dst []byte, values ...[]byte) Hash {
+	h.hasher.Reset()
+
+	scratch := h.scratch[:0]
+	scratch = appendCBORMajorTypeHeader(scratch, 4, len(values))
+	_, _ = h.hasher.Write(scratch)
+
+	for _, value := range values {
+		scratch = scratch[:0]
+		if value == nil {
+			scratch = append(scratch, 0xf6)
+			_, _ = h.hasher.Write(scratch)
+			continue
+		}
+
+		scratch = appendCBORMajorTypeHeader(scratch, 2, len(value))
+		_, _ = h.hasher.Write(scratch)
+		_, _ = h.hasher.Write(value)
+	}
+
+	h.scratch = scratch
+	return h.hasher.Sum(dst[:0])
 }
 
 // GenerateHash generates a hash of the given byte data using specified HashAlgo.
