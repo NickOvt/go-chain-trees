@@ -26,6 +26,7 @@ const (
 	defaultBlockSizeBytes               = 32
 	defaultDataSizeBytes                = 8
 	runtimeResetDelay     time.Duration = 100 * time.Millisecond
+	timeBucketCount                      = 10
 )
 
 type BenchmarkResult struct {
@@ -37,6 +38,7 @@ type BenchmarkResult struct {
 	//// Inclusion Proofs
 	InclusionProofTotalTime  time.Duration
 	InclusionProofGenTime    time.Duration
+	InclusionProofGenBuckets []TimeBucket
 	InclusionProofSize       int
 	InclusionProofVerifyTime time.Duration
 	////
@@ -44,6 +46,7 @@ type BenchmarkResult struct {
 	//// Exclusion Proofs
 	ExclusionProofTotalTime  time.Duration
 	ExclusionProofGenTime    time.Duration
+	ExclusionProofGenBuckets []TimeBucket
 	ExclusionProofSize       int
 	ExclusionProofVerifyTime time.Duration
 	////
@@ -52,6 +55,7 @@ type BenchmarkResult struct {
 	InsertElementCount int
 	InsertionTime      time.Duration
 	AvgPerBlock        time.Duration
+	InsertTimeBuckets  []TimeBucket
 	MemoryAllocatedMB  float64
 	TotalAllocatedMB   float64
 	HeapObjects        uint64
@@ -94,9 +98,17 @@ type ProofResult struct {
 	verificationTime time.Duration
 }
 
+type TimeBucket struct {
+	StartPercent int
+	EndPercent   int
+	SampleCount  int
+	AvgDuration  time.Duration
+}
+
 type InclusionExclusionProofResult struct {
 	totalProofTime time.Duration
 	avgProofTime   time.Duration
+	timeBuckets    []TimeBucket
 	avgProofSize   int
 	avgVerifyTime  time.Duration
 }
@@ -108,6 +120,7 @@ type InsertDeleteMetrics struct {
 	AllocatedMB  float64
 	TotalAllocMB float64
 	HeapObjects  uint64
+	TimeBuckets  []TimeBucket
 }
 
 type benchmarkProfiler struct {
@@ -310,6 +323,16 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 			r.DeletesTotalAllocatedMB,
 			r.DeletesHeapObjects,
 		)
+
+		if len(r.InclusionProofGenBuckets) > 0 {
+			fmt.Printf("  inclusion-proof-buckets: %s\n", formatTimeBuckets(r.InclusionProofGenBuckets))
+		}
+		if len(r.ExclusionProofGenBuckets) > 0 {
+			fmt.Printf("  exclusion-proof-buckets: %s\n", formatTimeBuckets(r.ExclusionProofGenBuckets))
+		}
+		if len(r.InsertTimeBuckets) > 0 {
+			fmt.Printf("  insert-buckets: %s\n", formatTimeBuckets(r.InsertTimeBuckets))
+		}
 	}
 }
 
@@ -331,11 +354,11 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 	defer file.Close()
 
 	// Header
-	file.WriteString("TreeType,Scenario,PrebuildElements,FinalElements,InsertElements,InsertTime(ns),AvgPerBlock(ns),MemAllocMB,TotalAllocMB,HeapObjects,InclusionProofTotal(ns),InclusionProofGen(ns),InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofTotal(ns),ExclusionProofGen(ns),ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects\n")
+	file.WriteString("TreeType,Scenario,PrebuildElements,FinalElements,InsertElements,InsertTime(ns),AvgPerBlock(ns),InsertTimeBuckets,MemAllocMB,TotalAllocMB,HeapObjects,InclusionProofTotal(ns),InclusionProofGen(ns),InclusionProofGenBuckets,InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofTotal(ns),ExclusionProofGen(ns),ExclusionProofGenBuckets,ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects\n")
 
 	// Data rows
 	for _, r := range allResults {
-		line := fmt.Sprintf("%s,%s,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
+		line := fmt.Sprintf("%s,%s,%d,%d,%d,%d,%d,%q,%.2f,%.2f,%d,%d,%d,%q,%d,%d,%d,%d,%q,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
 			r.TreeType,
 			r.Scenario,
 			r.PrebuildElementCount,
@@ -343,15 +366,18 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 			r.InsertElementCount,
 			r.InsertionTime.Nanoseconds(),
 			r.AvgPerBlock.Nanoseconds(),
+			formatTimeBuckets(r.InsertTimeBuckets),
 			r.MemoryAllocatedMB,
 			r.TotalAllocatedMB,
 			r.HeapObjects,
 			r.InclusionProofTotalTime.Nanoseconds(),
 			r.InclusionProofGenTime.Nanoseconds(),
+			formatTimeBuckets(r.InclusionProofGenBuckets),
 			r.InclusionProofSize,
 			r.InclusionProofVerifyTime.Nanoseconds(),
 			r.ExclusionProofTotalTime.Nanoseconds(),
 			r.ExclusionProofGenTime.Nanoseconds(),
+			formatTimeBuckets(r.ExclusionProofGenBuckets),
 			r.ExclusionProofSize,
 			r.ExclusionProofVerifyTime.Nanoseconds(),
 			r.DeleteElementCount,
@@ -366,7 +392,68 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 	fmt.Printf("\nResults saved to: %s\n", filename)
 }
 
-func calculateProofBenchmark(proofResults map[int]ProofResult) (time.Duration, time.Duration, int, time.Duration) {
+func newTimeBuckets() []TimeBucket {
+	buckets := make([]TimeBucket, timeBucketCount)
+	for idx := range buckets {
+		buckets[idx] = TimeBucket{
+			StartPercent: idx * (100 / timeBucketCount),
+			EndPercent:   (idx + 1) * (100 / timeBucketCount),
+		}
+	}
+
+	return buckets
+}
+
+func calculateTimeBucketsFromDurations(durations []time.Duration) []TimeBucket {
+	buckets := newTimeBuckets()
+	if len(durations) == 0 {
+		return buckets
+	}
+
+	totals := make([]time.Duration, timeBucketCount)
+	for idx, duration := range durations {
+		bucketIdx := idx * timeBucketCount / len(durations)
+		totals[bucketIdx] += duration
+		buckets[bucketIdx].SampleCount++
+	}
+
+	for idx := range buckets {
+		if buckets[idx].SampleCount > 0 {
+			buckets[idx].AvgDuration = totals[idx] / time.Duration(buckets[idx].SampleCount)
+		}
+	}
+
+	return buckets
+}
+
+func finalizeTimeBucket(buckets []TimeBucket, bucketIdx int, elapsed time.Duration, sampleCount int) {
+	if bucketIdx < 0 || bucketIdx >= len(buckets) || sampleCount <= 0 {
+		return
+	}
+
+	buckets[bucketIdx].SampleCount = sampleCount
+	buckets[bucketIdx].AvgDuration = elapsed / time.Duration(sampleCount)
+}
+
+func formatTimeBuckets(buckets []TimeBucket) string {
+	if len(buckets) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(buckets))
+	for _, bucket := range buckets {
+		if bucket.SampleCount == 0 {
+			parts = append(parts, fmt.Sprintf("%d-%d%%=n/a", bucket.StartPercent, bucket.EndPercent))
+			continue
+		}
+
+		parts = append(parts, fmt.Sprintf("%d-%d%%=%v(n=%d)", bucket.StartPercent, bucket.EndPercent, bucket.AvgDuration, bucket.SampleCount))
+	}
+
+	return strings.Join(parts, "|")
+}
+
+func calculateProofBenchmark(proofResults []ProofResult) (time.Duration, time.Duration, []TimeBucket, int, time.Duration) {
 	var totalProofTime time.Duration
 	var totalProofSize int
 	var totalVerifyTime time.Duration
@@ -378,14 +465,19 @@ func calculateProofBenchmark(proofResults map[int]ProofResult) (time.Duration, t
 	}
 
 	if len(proofResults) == 0 {
-		return 0, 0, 0, 0
+		return 0, 0, newTimeBuckets(), 0, 0
 	}
 
 	avgProofTime := totalProofTime / time.Duration(len(proofResults))
 	avgProofSize := totalProofSize / len(proofResults)
 	avgVerifyTime := totalVerifyTime / time.Duration(len(proofResults))
+	proofDurations := make([]time.Duration, len(proofResults))
+	for idx, pr := range proofResults {
+		proofDurations[idx] = pr.proofTime
+	}
+	timeBuckets := calculateTimeBucketsFromDurations(proofDurations)
 
-	return totalProofTime, avgProofTime, avgProofSize, avgVerifyTime
+	return totalProofTime, avgProofTime, timeBuckets, avgProofSize, avgVerifyTime
 }
 
 func newBenchmarkProfiler(t *testing.T, options *BenchmarkOptions, now time.Time) *benchmarkProfiler {
@@ -578,8 +670,20 @@ func runFreshInsertBatch(
 		runtime.ReadMemStats(&before)
 	}
 
+	timeBuckets := newTimeBuckets()
 	start := time.Now()
+	currentBucketIdx := 0
+	currentBucketStart := start
+	currentBucketCount := 0
 	for idx := 0; idx < count; idx++ {
+		nextBucketIdx := idx * timeBucketCount / count
+		if nextBucketIdx != currentBucketIdx {
+			finalizeTimeBucket(timeBuckets, currentBucketIdx, time.Since(currentBucketStart), currentBucketCount)
+			currentBucketIdx = nextBucketIdx
+			currentBucketStart = time.Now()
+			currentBucketCount = 0
+		}
+
 		key := keyFn()
 		data := nextData()
 
@@ -591,9 +695,11 @@ func runFreshInsertBatch(
 			return InsertDeleteMetrics{}, err
 		}
 
+		currentBucketCount++
 		*globalIndex = *globalIndex + 1
 	}
 	elapsed := time.Since(start)
+	finalizeTimeBucket(timeBuckets, currentBucketIdx, time.Since(currentBucketStart), currentBucketCount)
 
 	if !measure {
 		return InsertDeleteMetrics{}, nil
@@ -607,6 +713,7 @@ func runFreshInsertBatch(
 		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
 		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
 		HeapObjects:  after.HeapObjects,
+		TimeBuckets:  timeBuckets,
 	}, nil
 }
 
@@ -623,13 +730,27 @@ func measureExistingInsertBatch(
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
+	timeBuckets := newTimeBuckets()
 	start := time.Now()
+	currentBucketIdx := 0
+	currentBucketStart := start
+	currentBucketCount := 0
 	for idx := 0; idx < count; idx++ {
+		nextBucketIdx := idx * timeBucketCount / count
+		if nextBucketIdx != currentBucketIdx {
+			finalizeTimeBucket(timeBuckets, currentBucketIdx, time.Since(currentBucketStart), currentBucketCount)
+			currentBucketIdx = nextBucketIdx
+			currentBucketStart = time.Now()
+			currentBucketCount = 0
+		}
+
 		if err := insertFn(keyFn(), nextData()); err != nil {
 			return InsertDeleteMetrics{}, err
 		}
+		currentBucketCount++
 	}
 	elapsed := time.Since(start)
+	finalizeTimeBucket(timeBuckets, currentBucketIdx, time.Since(currentBucketStart), currentBucketCount)
 
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
@@ -639,6 +760,7 @@ func measureExistingInsertBatch(
 		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
 		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
 		HeapObjects:  after.HeapObjects,
+		TimeBuckets:  timeBuckets,
 	}, nil
 }
 
@@ -647,25 +769,26 @@ func measureProofBatch(
 	proofKeys []utils.Hash,
 	proveAndVerifyFn func(key utils.Hash) (int, time.Duration, time.Duration, error),
 ) InclusionExclusionProofResult {
-	proofResults := map[int]ProofResult{}
+	proofResults := make([]ProofResult, 0, len(proofKeys))
 
-	for idx, proofKey := range proofKeys {
+	for _, proofKey := range proofKeys {
 		proofSizeBytes, elapsedProof, elapsedVerif, err := proveAndVerifyFn(proofKey)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		proofResults[idx] = ProofResult{
+		proofResults = append(proofResults, ProofResult{
 			proofSizeBytes:   proofSizeBytes,
 			proofTime:        elapsedProof,
 			verificationTime: elapsedVerif,
-		}
+		})
 	}
 
-	totalProofTime, avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(proofResults)
+	totalProofTime, avgProofTime, timeBuckets, avgProofSize, avgVerifyTime := calculateProofBenchmark(proofResults)
 	return InclusionExclusionProofResult{
 		totalProofTime: totalProofTime,
 		avgProofTime:   avgProofTime,
+		timeBuckets:    timeBuckets,
 		avgProofSize:   avgProofSize,
 		avgVerifyTime:  avgVerifyTime,
 	}
@@ -934,6 +1057,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		if options.ElementCount > 0 {
 			t.Logf("Overall avg per block: %v", inserts.Elapsed/time.Duration(options.ElementCount))
 		}
+		t.Logf("Insert buckets: %s", formatTimeBuckets(inserts.TimeBuckets))
 		t.Logf("Memory allocated: %.2f MB", inserts.AllocatedMB)
 		t.Logf("Total allocated (including GC'd): %.2f MB", inserts.TotalAllocMB)
 		t.Logf("Heap objects: %d", inserts.HeapObjects)
@@ -942,6 +1066,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	if proofResult, ok := results["inclusionProof"].(InclusionExclusionProofResult); ok {
 		t.Logf("Time taken [Inclusion Proofs]: %v", proofResult.totalProofTime)
 		t.Logf("Average time for Inclusion Proof generation: %v", proofResult.avgProofTime)
+		t.Logf("Inclusion Proof generation buckets: %s", formatTimeBuckets(proofResult.timeBuckets))
 		t.Logf("Average Inclusion Proof size in bytes: %d", proofResult.avgProofSize)
 		t.Logf("Average time for Inclusion Proof verification: %v", proofResult.avgVerifyTime)
 	}
@@ -959,6 +1084,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	if proofResult, ok := results["exclusionProof"].(InclusionExclusionProofResult); ok {
 		t.Logf("Time taken [Exclusion Proofs]: %v", proofResult.totalProofTime)
 		t.Logf("Average time for Exclusion Proof generation: %v", proofResult.avgProofTime)
+		t.Logf("Exclusion Proof generation buckets: %s", formatTimeBuckets(proofResult.timeBuckets))
 		t.Logf("Average Exclusion Proof size in bytes: %d", proofResult.avgProofSize)
 		t.Logf("Average time for Exclusion Proof verification: %v", proofResult.avgVerifyTime)
 	}
@@ -976,6 +1102,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		if options.ElementCount > 0 {
 			result.AvgPerBlock = inserts.Elapsed / time.Duration(options.ElementCount)
 		}
+		result.InsertTimeBuckets = inserts.TimeBuckets
 		result.MemoryAllocatedMB = inserts.AllocatedMB
 		result.TotalAllocatedMB = inserts.TotalAllocMB
 		result.HeapObjects = inserts.HeapObjects
@@ -995,6 +1122,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	if proofResult, ok := results["inclusionProof"].(InclusionExclusionProofResult); ok {
 		result.InclusionProofTotalTime = proofResult.totalProofTime
 		result.InclusionProofGenTime = proofResult.avgProofTime
+		result.InclusionProofGenBuckets = proofResult.timeBuckets
 		result.InclusionProofSize = proofResult.avgProofSize
 		result.InclusionProofVerifyTime = proofResult.avgVerifyTime
 	}
@@ -1002,6 +1130,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	if proofResult, ok := results["exclusionProof"].(InclusionExclusionProofResult); ok {
 		result.ExclusionProofTotalTime = proofResult.totalProofTime
 		result.ExclusionProofGenTime = proofResult.avgProofTime
+		result.ExclusionProofGenBuckets = proofResult.timeBuckets
 		result.ExclusionProofSize = proofResult.avgProofSize
 		result.ExclusionProofVerifyTime = proofResult.avgVerifyTime
 	}
