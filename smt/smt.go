@@ -906,7 +906,7 @@ func recalculateNodeHash(node *Node, tree *SMT) {
 
 func (t *SMT) insert(key []byte, data []byte, currentRoot *Node, newPath *Path, appendOnly bool) (*Node, error) {
 	nodeKeyHash := utils.GenerateHash(t.HashAlgo, key)
-	nodeData := slices.Clone(data)
+	nodeData := data
 
 	chosenPath := chooseNewPath(nodeKeyHash, newPath)
 	if pathBitLen(chosenPath) <= 0 {
