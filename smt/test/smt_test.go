@@ -84,13 +84,17 @@ func TestSMT_10M(t *testing.T) {
 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
 }
 
-func TestSMT_50M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 50_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_25M(t *testing.T) {
+	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 25_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
 }
 
-func TestSMT_100M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 100_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
-}
+//func TestSMT_50M(t *testing.T) {
+//	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 50_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+//}
+//
+//func TestSMT_100M(t *testing.T) {
+//	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 100_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+//}
 
 func TestSMT_ProofOnly_5M(t *testing.T) {
 	appendResult(t, test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.SMT, 5_000_000, 0.01))

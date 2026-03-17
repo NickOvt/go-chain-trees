@@ -32,20 +32,16 @@ func main() {
 	// Print the final tree
 	avl.PrintTree()
 
-	searchCBOR, _ := utils.EncodeCBOR([]byte(strconv.Itoa(4)))
-	search := utils.GenerateHash(avl.HashAlgo, searchCBOR)
-
-	fmt.Println(fmt.Sprintf("%x", search))
-
-	fmt.Println(avl.Search(search))
+	searchKey := []byte(strconv.Itoa(4))
+	fmt.Println(fmt.Sprintf("%x", avl.HashKey(searchKey)))
+	fmt.Println(avl.SearchByKey(searchKey))
 
 	if err := avl.ValidateTree(); err != nil {
 		fmt.Printf("Tree validation failed: %v\n", err)
 	}
 
-	search2CBOR, _ := utils.EncodeCBOR([]byte(strconv.Itoa(13)))
-	search2 := utils.GenerateHash(avl.HashAlgo, search2CBOR)
-	inclusionProof, _ := avl.GenerateInclusionExclusionProof(search2)
+	search2 := []byte(strconv.Itoa(13))
+	inclusionProof, _ := avl.GenerateInclusionExclusionProofByKey(search2)
 
 	proofCbor, _ := utils.EncodeCBOR(inclusionProof.ToPublicProof())
 

@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"crypto/sha3"
 	"crypto/sha512"
-	"math/bits"
+	"encoding/binary"
+	"hash"
+	"io"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -44,6 +46,12 @@ func EncodeCBOR(v any) (CBORData, error) {
 	}
 
 	return b, nil
+}
+
+// EncodeCBORToWriter encodes a value using deterministic CBOR directly into the
+// provided writer, avoiding an intermediate byte slice.
+func EncodeCBORToWriter(w io.Writer, v any) error {
+	return deterministicCBORMarshal.NewEncoder(w).Encode(v)
 }
 
 // DecodeCBOR decodes CBOR data into the specified type T.
@@ -124,6 +132,70 @@ var hashAlgoToHashAlgoOutputBitCount = map[HashAlgo]int{
 	SHA256: 256,
 	SHA384: 384,
 	SHA512: 512,
+}
+
+// NewHasher returns a streaming hasher for the requested hash algorithm.
+func NewHasher(hashAlgo HashAlgo) hash.Hash {
+	switch hashAlgo {
+	case SHA384:
+		return sha3.New384()
+	case SHA512:
+		return sha512.New()
+	default:
+		return sha256.New()
+	}
+}
+
+type DataHasher struct {
+	hasher  hash.Hash
+	scratch []byte
+}
+
+func NewDataHasher(hashAlgo HashAlgo) *DataHasher {
+	return &DataHasher{hasher: NewHasher(hashAlgo)}
+}
+
+func appendCBORMajorTypeHeader(dst []byte, major byte, value int) []byte {
+	switch {
+	case value <= 23:
+		return append(dst, byte(major<<5)|byte(value))
+	case value <= 0xff:
+		return append(dst, byte(major<<5)|24, byte(value))
+	case value <= 0xffff:
+		dst = append(dst, byte(major<<5)|25)
+		return binary.BigEndian.AppendUint16(dst, uint16(value))
+	case uint64(value) <= 0xffffffff:
+		dst = append(dst, byte(major<<5)|26)
+		return binary.BigEndian.AppendUint32(dst, uint32(value))
+	default:
+		dst = append(dst, byte(major<<5)|27)
+		return binary.BigEndian.AppendUint64(dst, uint64(value))
+	}
+}
+
+// SumTo hashes a deterministic CBOR array whose elements are byte strings or nil.
+func (h *DataHasher) SumTo(dst []byte, values ...[]byte) Hash {
+	h.hasher.Reset()
+
+	scratch := h.scratch[:0]
+	scratch = appendCBORMajorTypeHeader(scratch, 4, len(values))
+	_, _ = h.hasher.Write(scratch)
+
+	for _, value := range values {
+		scratch = scratch[:0]
+		if value == nil {
+			scratch = append(scratch, 0xf6)
+			_, _ = h.hasher.Write(scratch)
+			continue
+		}
+
+		scratch = appendCBORMajorTypeHeader(scratch, 2, len(value))
+		_, _ = h.hasher.Write(scratch)
+		_, _ = h.hasher.Write(value)
+	}
+
+	h.scratch = scratch
+	return h.hasher.Sum(dst[:0])
 }
 
 // GenerateHash generates a hash of the given byte data using specified HashAlgo.
@@ -318,234 +390,4 @@ func GetBit(byteArray []byte, i int) bool {
 	}
 	bitIdx := 7 - (i % 8)
 	return (byteArray[byteIdx] & (1 << bitIdx)) != 0
-}
-
-// ReverseBits returns a new byte array with both the order of bytes and the bits
-// within each byte reversed. For example, if the input is [0b10110000, 0b00001111],
-// the output will be [0b11110000, 0b00001101].
-//
-// The function does not modify the original byte array.
-func ReverseBits(data []byte) []byte {
-	result := make([]byte, len(data))
-	for i, b := range data {
-		result[len(data)-1-i] = bits.Reverse8(b)
-	}
-	return result
-}
-
-// FindCommonBitPrefix returns the longest common bit prefix of two byte arrays.
-// The function compares the byte arrays bit by bit and returns a new byte array
-// containing all bits that match from the beginning until the first differing bit.
-//
-// If the common prefix doesn't end on a byte boundary, the last byte contains only
-// the matching bits with the remaining bits zeroed out.
-//
-// If the arrays have different lengths, comparison stops at the end of the shorter array.
-// If there is no common prefix, an empty byte array is returned with prefixLen = 0.
-//
-// Parameters:
-//   - a: First byte array
-//   - b: Second byte array
-//
-// Returns:
-//   - []byte: A new byte array containing the common bit prefix
-//   - int: Number of bits in the common prefix
-//
-// Example:
-//   - a = [0b11110000]
-//   - b = [0b11111111]
-//   - result = [0b11110000], prefixLen = 4, paddingBits = 4
-func FindCommonBitPrefix(a, b []byte) ([]byte, int, int) {
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
-	}
-
-	prefixBits := 0
-
-	// Find how many bits match
-	for i := 0; i < minLen; i++ {
-		xor := a[i] ^ b[i]
-		if xor == 0 {
-			// All 8 bits in this byte match
-			prefixBits += 8
-		} else {
-			// Find first differing bit using leading zeros count
-			prefixBits += bits.LeadingZeros8(xor)
-			break
-		}
-	}
-
-	// Calculate how many bytes we need
-	prefixBytes := prefixBits / 8
-	remainingBits := prefixBits % 8
-
-	result := make([]byte, prefixBytes)
-	copy(result, a[:prefixBytes])
-
-	paddingBits := 0
-	// If there are remaining bits, add a partial byte
-	if remainingBits > 0 {
-		paddingBits = 8 - remainingBits
-		mask := byte(0xFF << paddingBits)
-		result = append(result, a[prefixBytes]&mask)
-	}
-
-	return result, prefixBits, paddingBits
-}
-
-// RemoveFirstNBits removes the first n bits from a byte array and returns the remaining bits.
-// The result is left-aligned (shifted to the beginning) and padded with zeros at the end
-// if necessary to fill the last byte.
-//
-// Parameters:
-//   - data: The input byte array
-//   - n: Number of bits to remove from the beginning
-//
-// Returns:
-//   - []byte: A new byte array with the first n bits removed, padded with zeros at the end
-//   - int: Number of bits in the result (excluding padding)
-//
-// Example:
-//   - data = [0b11110000, 0b10101010]
-//   - n = 4
-//   - result = [0b00001010, 0b10100000], resultBits = 12
-//   - (removed first 4 bits, shifted remaining bits left, 12 bits remain)
-func RemoveFirstNBits(data []byte, n int) ([]byte, int, int) {
-	if n <= 0 {
-		return append([]byte(nil), data...), len(data) * 8, 0
-	}
-
-	totalBits := len(data) * 8
-	if n >= totalBits {
-		return []byte{}, 0, 0
-	}
-
-	remainingBits := totalBits - n
-	resultBytes := (remainingBits + 7) / 8 // Ceiling division
-	paddingBits := (resultBytes * 8) - remainingBits
-
-	result := make([]byte, resultBytes)
-
-	skipBytes := n / 8
-	skipBits := n % 8
-
-	for i := 0; i < resultBytes; i++ {
-		srcByteIdx := skipBytes + i
-
-		if srcByteIdx < len(data) {
-			// Take remaining bits from current byte
-			result[i] = data[srcByteIdx] << skipBits
-
-			// Take leading bits from next byte if needed
-			if skipBits > 0 && srcByteIdx+1 < len(data) {
-				result[i] |= data[srcByteIdx+1] >> (8 - skipBits)
-			}
-		}
-	}
-
-	return result, remainingBits, paddingBits
-}
-
-// FindCommonBitPrefixWithLen returns the longest common bit prefix of two byte arrays,
-// considering only the specified number of meaningful bits in each array.
-//
-// This is essential when comparing bit sequences that don't fill complete bytes,
-// as it prevents padding bits from affecting the comparison.
-//
-// Parameters:
-//   - a: First byte array
-//   - aBitLen: Number of meaningful bits in 'a'
-//   - b: Second byte array
-//   - bBitLen: Number of meaningful bits in 'b'
-//
-// Returns:
-//   - []byte: A new byte array containing the common bit prefix
-//   - int: Number of bits in the common prefix
-//   - int: Number of padding bits in the last byte of the result
-func FindCommonBitPrefixWithLen(a []byte, aBitLen int, b []byte, bBitLen int) ([]byte, int, int) {
-	// Only compare up to the shorter of the two meaningful lengths
-	maxBitsToCompare := aBitLen
-	if bBitLen < maxBitsToCompare {
-		maxBitsToCompare = bBitLen
-	}
-
-	if maxBitsToCompare <= 0 {
-		return []byte{}, 0, 0
-	}
-
-	prefixBits := 0
-
-	// Compare byte by byte, but respect the bit length limits
-	maxBytes := (maxBitsToCompare + 7) / 8
-
-	for i := 0; i < maxBytes; i++ {
-		if i >= len(a) || i >= len(b) {
-			break
-		}
-
-		// Calculate how many bits to compare in this byte
-		bitsInThisByte := 8
-		if (i+1)*8 > maxBitsToCompare {
-			bitsInThisByte = maxBitsToCompare - i*8
-		}
-
-		xor := a[i] ^ b[i]
-
-		if xor == 0 && bitsInThisByte == 8 {
-			// All 8 bits in this byte match
-			prefixBits += 8
-		} else {
-			// Find first differing bit
-			matchingBits := bits.LeadingZeros8(xor)
-
-			// Don't count matches beyond what we should compare
-			if matchingBits > bitsInThisByte {
-				matchingBits = bitsInThisByte
-			}
-
-			prefixBits += matchingBits
-			break
-		}
-	}
-
-	// Calculate how many bytes we need
-	prefixBytes := prefixBits / 8
-	remainingBits := prefixBits % 8
-
-	result := make([]byte, prefixBytes)
-	copy(result, a[:prefixBytes])
-
-	paddingBits := 0
-	// If there are remaining bits, add a partial byte
-	if remainingBits > 0 {
-		paddingBits = 8 - remainingBits
-		mask := byte(0xFF << paddingBits)
-		result = append(result, a[prefixBytes]&mask)
-	}
-
-	return result, prefixBits, paddingBits
-}
-
-// RemoveFirstNBitsWithLen removes the first n meaningful bits from a bitstring.
-// Unlike utils.RemoveFirstNBits, it respects bitLen and ignores right-side byte padding.
-func RemoveFirstNBitsWithLen(data []byte, bitLen int, n int) ([]byte, int) {
-	if bitLen <= 0 || n >= bitLen {
-		return []byte{}, 0
-	}
-
-	if n < 0 {
-		n = 0
-	}
-
-	remainingBits := bitLen - n
-	result := make([]byte, (remainingBits+7)/8)
-
-	for i := 0; i < remainingBits; i++ {
-		if GetBit(data, n+i) {
-			result[i/8] |= 1 << (7 - (i % 8))
-		}
-	}
-
-	return result, remainingBits
 }

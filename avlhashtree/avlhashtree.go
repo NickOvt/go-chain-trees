@@ -51,45 +51,22 @@ func (node *Node) getKey() utils.Hash {
 	return node.Key
 }
 
-func calculateNodeHash(hashAlgo utils.HashAlgo, key utils.Hash, data utils.CBORData) (utils.Hash, error) {
-	encodedArray, err := utils.EncodeCBOR([]any{key, data})
-	if err != nil {
-		return nil, err
-	}
-
-	return utils.GenerateHash(hashAlgo, encodedArray), nil
-}
-
-func calculateSubtreeHashFromParts(hashAlgo utils.HashAlgo, nodeHash, leftHash, rightHash utils.Hash) (utils.Hash, error) {
-	encodedArray, err := utils.EncodeCBOR([]any{nodeHash, leftHash, rightHash})
-	if err != nil {
-		return nil, err
-	}
-
-	return utils.GenerateHash(hashAlgo, encodedArray), nil
-}
-
 // Computes and updates the SubtreeHash for the current node.
 // The subtree hash is calculated by combining the current node's hash with the
 // hashes of its left and right children.
 //
 // Returns:
 //   - utils.Hash: The calculated subtree hash
-//   - error: An error if CBOR encoding fails, nil otherwise
-func (node *Node) calculateSubtreeHash(hashAlgo utils.HashAlgo) (utils.Hash, error) {
-	subtreeHash, err := calculateSubtreeHashFromParts(hashAlgo, node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash())
-	if err != nil {
-		return nil, err
-	}
-
-	node.SubtreeHash = subtreeHash
-	return node.SubtreeHash, nil
+func (node *Node) calculateSubtreeHash(tree *AVLHashTree) utils.Hash {
+	node.SubtreeHash = tree.calculateSubtreeHashFromParts(node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash(), node.SubtreeHash)
+	return node.SubtreeHash
 }
 
 // AVLHashTree Main AVL Tree struct
 type AVLHashTree struct {
-	Root     *Node
-	HashAlgo utils.HashAlgo
+	Root       *Node
+	HashAlgo   utils.HashAlgo
+	dataHasher *utils.DataHasher
 }
 
 // NewAVLHashTree creates a new, empty AVL hash tree
@@ -97,7 +74,27 @@ type AVLHashTree struct {
 // Returns:
 //   - *AVLHashTree: Empty AVLHashTree struct
 func NewAVLHashTree(hashAlgo utils.HashAlgo) *AVLHashTree {
-	return &AVLHashTree{Root: nil, HashAlgo: hashAlgo}
+	return &AVLHashTree{
+		Root:       nil,
+		HashAlgo:   hashAlgo,
+		dataHasher: utils.NewDataHasher(hashAlgo),
+	}
+}
+
+func (t *AVLHashTree) getDataHasher() *utils.DataHasher {
+	if t.dataHasher == nil {
+		t.dataHasher = utils.NewDataHasher(t.HashAlgo)
+	}
+
+	return t.dataHasher
+}
+
+func (t *AVLHashTree) calculateNodeHash(key utils.Hash, data utils.CBORData, dst utils.Hash) utils.Hash {
+	return t.getDataHasher().SumTo(dst, key, data)
+}
+
+func (t *AVLHashTree) calculateSubtreeHashFromParts(nodeHash, leftHash, rightHash utils.Hash, dst utils.Hash) utils.Hash {
+	return t.getDataHasher().SumTo(dst, nodeHash, leftHash, rightHash)
 }
 
 // Returns the height of the given node in the tree.
@@ -170,6 +167,12 @@ func (t *AVLHashTree) Search(key utils.Hash) (any, error) {
 	return dataDecoded, nil
 }
 
+// SearchByKey hashes the provided raw key bytes using the tree hash algorithm
+// and searches for the corresponding node.
+func (t *AVLHashTree) SearchByKey(key []byte) (any, error) {
+	return t.Search(t.HashKey(key))
+}
+
 func (t *AVLHashTree) search(node *Node, key utils.Hash) *Node {
 	for node != nil {
 		cmp := bytes.Compare(key, node.Key)
@@ -197,8 +200,8 @@ func (t *AVLHashTree) rotateLeft(node *Node) *Node {
 	node.Height = 1 + max(height(node.LeftChild), height(node.RightChild))
 	B.Height = 1 + max(height(B.LeftChild), height(B.RightChild))
 
-	node.calculateSubtreeHash(t.HashAlgo)
-	B.calculateSubtreeHash(t.HashAlgo)
+	node.calculateSubtreeHash(t)
+	B.calculateSubtreeHash(t)
 
 	return B
 }
@@ -215,14 +218,19 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 	node.Height = 1 + max(height(node.LeftChild), height(node.RightChild))
 	A.Height = 1 + max(height(A.LeftChild), height(A.RightChild))
 
-	node.calculateSubtreeHash(t.HashAlgo) // Old root first
-	A.calculateSubtreeHash(t.HashAlgo)
+	node.calculateSubtreeHash(t) // Old root first
+	A.calculateSubtreeHash(t)
 
 	return A
 }
 
+// HashKey derives the stored key hash from the provided raw key bytes.
+func (t *AVLHashTree) HashKey(key []byte) utils.Hash {
+	return utils.GenerateHash(t.HashAlgo, key)
+}
+
 // Insert data into the AVL Hash Tree.
-// The provided raw key bytes are CBOR-encoded and then hashed using the tree hash algorithm.
+// The provided key bytes are hashed as-is using the tree hash algorithm.
 // Data is converted to CBOR before inserting.
 //
 // Params:
@@ -232,19 +240,7 @@ func (t *AVLHashTree) rotateRight(node *Node) *Node {
 // Returns:
 //   - nil
 func (t *AVLHashTree) Insert(key []byte, data any) error {
-	keyCBOR, err := utils.EncodeCBOR(key)
-	if err != nil {
-		return err
-	}
-
-	return t.InsertCBOR(keyCBOR, data)
-}
-
-// InsertCBOR inserts data using a key that is already CBOR-encoded.
-// The provided CBOR key bytes are hashed using the tree hash algorithm before being stored.
-func (t *AVLHashTree) InsertCBOR(keyCBOR utils.CBORData, data any) error {
-	hashedKey := utils.GenerateHash(t.HashAlgo, keyCBOR)
-	return t.InsertHashed(hashedKey, data)
+	return t.InsertHashed(t.HashKey(key), data)
 }
 
 // InsertHashed inserts data using an already-hashed key.
@@ -275,22 +271,15 @@ func (t *AVLHashTree) insert(root *Node, key utils.Hash, data utils.CBORData) (*
 
 func (t *AVLHashTree) insertRecursive(root *Node, key utils.Hash, data utils.CBORData) (*Node, bool, error) {
 	if root == nil {
-		nodeHash, err := calculateNodeHash(t.HashAlgo, key, data)
-		if err != nil {
-			return nil, false, err
-		}
-
 		node := &Node{
 			Key:        key,
 			Data:       data,
 			Height:     1,
 			LeftChild:  nil,
 			RightChild: nil,
-			NodeHash:   nodeHash,
+			NodeHash:   t.calculateNodeHash(key, data, nil),
 		}
-		if _, err := node.calculateSubtreeHash(t.HashAlgo); err != nil {
-			return nil, false, err
-		}
+		node.calculateSubtreeHash(t)
 		return node, true, nil
 	}
 
@@ -311,10 +300,7 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.Hash, data utils.CBO
 		}
 	} else {
 		// duplicate
-		possibleNewNodeHash, err := calculateNodeHash(t.HashAlgo, key, data)
-		if err != nil {
-			return nil, false, err
-		}
+		possibleNewNodeHash := t.calculateNodeHash(key, data, nil)
 		if !bytes.Equal(root.getNodeHash(), possibleNewNodeHash) {
 			root.Data = data
 			root.NodeHash = possibleNewNodeHash
@@ -352,9 +338,7 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.Hash, data utils.CBO
 	}
 
 	// Recalculate Subtree Hash for root here, after insert and rotations
-	if _, err := root.calculateSubtreeHash(t.HashAlgo); err != nil {
-		return nil, false, err
-	}
+	root.calculateSubtreeHash(t)
 
 	return root, true, nil
 }
@@ -369,6 +353,12 @@ func (t *AVLHashTree) insertRecursive(root *Node, key utils.Hash, data utils.CBO
 func (t *AVLHashTree) Delete(key utils.Hash) error {
 	t.Root = t.delete(t.Root, key)
 	return nil
+}
+
+// DeleteByKey hashes the provided raw key bytes using the tree hash algorithm
+// and deletes the corresponding node.
+func (t *AVLHashTree) DeleteByKey(key []byte) error {
+	return t.Delete(t.HashKey(key))
 }
 
 func (t *AVLHashTree) delete(root *Node, key utils.Hash) *Node {
@@ -433,11 +423,7 @@ func (t *AVLHashTree) deleteRecursive(root *Node, key utils.Hash) (*Node, bool) 
 		root = t.rotateLeft(root)
 	}
 
-	_, err := root.calculateSubtreeHash(t.HashAlgo)
-	if err != nil {
-		// handle error
-		fmt.Println("Calculate Subtree Hash Failed")
-	}
+	root.calculateSubtreeHash(t)
 
 	return root, true
 }
@@ -530,11 +516,7 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 	}
 
 	// 1. Validate NodeHash (hash of CBOR array [Key, Data])
-	expectedNodeHash, err := calculateNodeHash(t.HashAlgo, node.Key, node.Data)
-	if err != nil {
-		return fmt.Errorf("failed to encode node payload for key %x: %v",
-			node.Key[:min(len(node.Key), 8)], err)
-	}
+	expectedNodeHash := t.calculateNodeHash(node.Key, node.Data, nil)
 	if !bytes.Equal(node.NodeHash, expectedNodeHash) {
 		return fmt.Errorf("invalid NodeHash for key %x: expected %x, got %x",
 			node.Key[:min(len(node.Key), 8)], expectedNodeHash, node.NodeHash)
@@ -551,11 +533,7 @@ func (t *AVLHashTree) validateNode(node *Node) error {
 	// 3. Validate SubtreeHash (hash of CBOR array [NodeHash, LeftSubtreeHash, RightSubtreeHash])
 	leftHash := node.LeftChild.getNodeSubtreeHash()
 	rightHash := node.RightChild.getNodeSubtreeHash()
-	expectedSubtreeHash, err := calculateSubtreeHashFromParts(t.HashAlgo, node.NodeHash, leftHash, rightHash)
-	if err != nil {
-		return fmt.Errorf("failed to encode subtree payload for key %x: %v",
-			node.Key[:min(len(node.Key), 8)], err)
-	}
+	expectedSubtreeHash := t.calculateSubtreeHashFromParts(node.NodeHash, leftHash, rightHash, nil)
 	if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
 		return fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x",
 			node.Key[:min(len(node.Key), 8)], expectedSubtreeHash, node.SubtreeHash)
@@ -576,6 +554,12 @@ type CryptographicProof struct {
 
 func (t *AVLHashTree) GenerateInclusionExclusionProof(key utils.Hash) (*CryptographicProof, error) {
 	return t.generateInclusionExclusionProof(key)
+}
+
+// GenerateInclusionExclusionProofByKey hashes the provided raw key bytes using
+// the tree hash algorithm and generates a proof for the resulting stored key.
+func (t *AVLHashTree) GenerateInclusionExclusionProofByKey(key []byte) (*CryptographicProof, error) {
+	return t.GenerateInclusionExclusionProof(t.HashKey(key))
 }
 
 func (t *AVLHashTree) generateInclusionExclusionProof(key utils.Hash) (*CryptographicProof, error) {
@@ -778,14 +762,12 @@ func verifyPublicExclusionConditions(proof *PublicCryptographicProof) bool {
 
 func verifyPublicHashChain(proof *PublicCryptographicProof) (bool, error) {
 	calculatedHashes := make(map[int]utils.Hash)
+	dataHasher := utils.NewDataHasher(proof.HashAlgo)
 
 	for i := len(proof.Path) - 1; i >= 0; i-- {
 		node := proof.Path[i]
 
-		expectedNodeHash, err := calculateNodeHash(proof.HashAlgo, node.Key, node.Data)
-		if err != nil {
-			return false, fmt.Errorf("failed to encode node payload for key %x: %v", node.Key[:min(len(node.Key), 8)], err)
-		}
+		expectedNodeHash := dataHasher.SumTo(nil, node.Key, node.Data)
 		if !bytes.Equal(node.NodeHash, expectedNodeHash) {
 			return false, fmt.Errorf("invalid node hash for key %x at %d: expected %x, got %x", node.Key[:min(len(node.Key), 8)], i, expectedNodeHash, node.NodeHash)
 		}
@@ -813,11 +795,7 @@ func verifyPublicHashChain(proof *PublicCryptographicProof) (bool, error) {
 			rightHash = node.RightChildSubtreeHash
 		}
 
-		calculatedSubtreeHash, err := calculateSubtreeHashFromParts(proof.HashAlgo, node.NodeHash, leftHash, rightHash)
-		if err != nil {
-			return false, fmt.Errorf("failed to encode subtree payload for key %x: %v", node.Key[:min(len(node.Key), 8)], err)
-		}
-		calculatedHashes[i] = calculatedSubtreeHash
+		calculatedHashes[i] = dataHasher.SumTo(nil, node.NodeHash, leftHash, rightHash)
 	}
 
 	if !bytes.Equal(proof.RootHash, calculatedHashes[0]) {
@@ -883,19 +861,12 @@ func (t *AVLHashTree) verifyHashChain(proof *CryptographicProof) (bool, error) {
 	for i := len(proof.Path) - 1; i >= 0; i-- {
 		node := proof.Path[i]
 
-		expectedHash, err := calculateNodeHash(t.HashAlgo, node.Key, node.Data)
-		if err != nil {
-			return false, fmt.Errorf("failed to encode node payload for key %x: %v", node.Key, err)
-		}
+		expectedHash := t.calculateNodeHash(node.Key, node.Data, nil)
 		if !bytes.Equal(node.NodeHash, expectedHash) {
 			return false, fmt.Errorf("invalid NodeHash for key %x: expected %x, got %x", node.Key, expectedHash, node.NodeHash)
 		}
 
-		expectedSubtreeHash, err := calculateSubtreeHashFromParts(t.HashAlgo, node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash())
-		if err != nil {
-			return false, fmt.Errorf("failed to encode subtree payload for verification: %v", err)
-		}
-
+		expectedSubtreeHash := t.calculateSubtreeHashFromParts(node.getNodeHash(), node.LeftChild.getNodeSubtreeHash(), node.RightChild.getNodeSubtreeHash(), nil)
 		if !bytes.Equal(node.SubtreeHash, expectedSubtreeHash) {
 			return false, fmt.Errorf("invalid SubtreeHash for key %x: expected %x, got %x", node.Key, expectedSubtreeHash, node.SubtreeHash)
 		}

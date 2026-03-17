@@ -53,7 +53,7 @@ func TestSMT_GenerateInclusionExclusionProof_Inclusion_LeafToRootOrderAndHashCha
 		t.Fatalf("first proof node data does not match target leaf data")
 	}
 
-	expectedLeafHash := utils.ConcatDataAndGenerateCombinedHash(tree.HashAlgo, first.Path, first.Data)
+	expectedLeafHash := mustHashSMTNodeTuple(t, tree.HashAlgo, first.Path, first.Data)
 	if !bytes.Equal(expectedLeafHash, leaf.Hash) {
 		t.Fatalf("first proof node does not recreate target leaf hash")
 	}
@@ -326,7 +326,7 @@ func recomputeRootFromProofBySpec(t *testing.T, hashAlgo utils.HashAlgo, proof *
 		t.Fatalf("first proof node must contain leaf data for inclusion verification")
 	}
 
-	currentHash := utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[0].Path, proof.Path[0].Data)
+	currentHash := mustHashSMTNodeTuple(t, hashAlgo, proof.Path[0].Path, proof.Path[0].Data)
 
 	for i := 1; i < len(proof.Path); i++ {
 		rightmostBit, ok := rightmostPathBit(proof.Path[i-1].Path)
@@ -335,9 +335,9 @@ func recomputeRootFromProofBySpec(t *testing.T, hashAlgo utils.HashAlgo, proof *
 		}
 
 		if rightmostBit {
-			currentHash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
+			currentHash = mustHashSMTNodeTuple(t, hashAlgo, proof.Path[i].Path, proof.Path[i].Hash, currentHash)
 		} else {
-			currentHash = utils.ConcatDataAndGenerateCombinedHash(hashAlgo, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
+			currentHash = mustHashSMTNodeTuple(t, hashAlgo, proof.Path[i].Path, currentHash, proof.Path[i].Hash)
 		}
 	}
 
