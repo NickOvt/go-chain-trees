@@ -276,15 +276,11 @@ func TestSMT_RightSubtree_DuplicateInsert_AppendOnlyFalse_UpdatesNodeAndHashes(t
 		t.Fatalf("failed to find updated leaf for k1 after duplicate insert")
 	}
 
-	updatedValueCBOR, err := utils.EncodeCBOR(updatedValue)
-	if err != nil {
-		t.Fatalf("failed to encode expected CBOR data: %v", err)
-	}
-	if !bytes.Equal([]byte(leafAfter.Data), []byte(updatedValueCBOR)) {
+	if !bytes.Equal([]byte(leafAfter.Data), updatedValue) {
 		t.Fatalf("leaf data was not updated on duplicate insert")
 	}
 
-	expectedLeafHash := mustHashSMTNodeTuple(t, tree.HashAlgo, leafAfter.Path.Encode(), updatedValueCBOR)
+	expectedLeafHash := mustHashSMTNodeTuple(t, tree.HashAlgo, leafAfter.Path.Encode(), updatedValue)
 	if !bytes.Equal([]byte(leafAfter.Hash), []byte(expectedLeafHash)) {
 		t.Fatalf("updated leaf hash mismatch")
 	}
