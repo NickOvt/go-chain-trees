@@ -1,9 +1,9 @@
 package test_interfaces
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
-	"math/big"
 	randMath "math/rand"
 	"os"
 	"path/filepath"
@@ -26,7 +26,7 @@ const (
 	defaultBlockSizeBytes               = 32
 	defaultDataSizeBytes                = 8
 	runtimeResetDelay     time.Duration = 100 * time.Millisecond
-	timeBucketCount                      = 10
+	timeBucketCount                     = 10
 )
 
 type BenchmarkResult struct {
@@ -1149,11 +1149,16 @@ func GetCounterKeyFunc() func() utils.Hash {
 }
 
 func GetCounterKeyFuncFrom(start int64) func() utils.Hash {
-	counter := big.NewInt(start)
-	one := big.NewInt(1)
+	if start < 0 {
+		start = 0
+	}
+
+	counter := uint64(start)
+	var counterBytes [8]byte
 
 	return func() utils.Hash {
-		counter.Add(counter, one)
-		return utils.GenerateHashSha256(counter.Bytes())
+		counter++
+		binary.BigEndian.PutUint64(counterBytes[:], counter)
+		return utils.GenerateHashSha256(counterBytes[:])
 	}
 }
