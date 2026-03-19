@@ -132,6 +132,21 @@ func pathFromKeyBytes(key []byte, bitLen int) *Path {
 	}
 }
 
+// keyPathBit returns path bit `idx` derived from key bytes without allocating a Path.
+// Path bit ordering matches pathFromKeyBytes + pathBit (LSB-first within each reversed byte).
+func keyPathBit(key []byte, idx int) int {
+	if idx < 0 || idx >= len(key)*8 {
+		return 0
+	}
+
+	byteIdx := len(key) - 1 - (idx >> 3)
+	if byteIdx < 0 || byteIdx >= len(key) {
+		return 0
+	}
+
+	return int((key[byteIdx] >> (idx & 7)) & 1)
+}
+
 func pathBit(path *Path, idx int) int {
 	if path == nil || idx < 0 || idx >= path.bitLen {
 		return 0
@@ -276,6 +291,39 @@ func pathCommonPrefixLenAt(a *Path, aOffset int, b *Path, bOffset int) int {
 
 	for prefixLen < maxBits {
 		if pathBit(a, aOffset+prefixLen) != pathBit(b, bOffset+prefixLen) {
+			break
+		}
+		prefixLen++
+	}
+
+	return prefixLen
+}
+
+func pathCommonPrefixLenAtKey(path *Path, pathOffset int, key []byte, keyOffset int, keyBitLen int) int {
+	if path == nil || len(key) == 0 {
+		return 0
+	}
+	if pathOffset < 0 {
+		pathOffset = 0
+	}
+	if keyOffset < 0 {
+		keyOffset = 0
+	}
+	if keyBitLen <= 0 {
+		keyBitLen = len(key) * 8
+	}
+	if pathOffset >= path.bitLen || keyOffset >= keyBitLen {
+		return 0
+	}
+
+	maxBits := path.bitLen - pathOffset
+	if keyRemaining := keyBitLen - keyOffset; keyRemaining < maxBits {
+		maxBits = keyRemaining
+	}
+
+	prefixLen := 0
+	for prefixLen < maxBits {
+		if pathBit(path, pathOffset+prefixLen) != keyPathBit(key, keyOffset+prefixLen) {
 			break
 		}
 		prefixLen++
@@ -441,12 +489,14 @@ type ProofNode struct {
 
 type InclusionExclusionProof struct {
 	Root utils.Hash
+	Key  utils.Hash
 	Path []*ProofNode
 }
 
 type PublicInclusionExclusionProof struct {
 	Root utils.Hash  `cbor:"1,keyasint" json:"root"`
 	Path [][2][]byte `cbor:"2,keyasint" json:"path"`
+	Key  utils.Hash  `cbor:"3,keyasint" json:"key"`
 }
 
 func (proof *InclusionExclusionProof) ToPublicProof() *PublicInclusionExclusionProof {
@@ -460,16 +510,17 @@ func (proof *InclusionExclusionProof) ToPublicProof() *PublicInclusionExclusionP
 			continue
 		}
 
-		path[i][0] = slices.Clone(proofNode.Path)
+		path[i][0] = proofNode.Path
 		if len(proofNode.Data) > 0 {
-			path[i][1] = slices.Clone(proofNode.Data)
+			path[i][1] = proofNode.Data
 		} else {
-			path[i][1] = slices.Clone(proofNode.Hash)
+			path[i][1] = proofNode.Hash
 		}
 	}
 
 	return &PublicInclusionExclusionProof{
-		Root: slices.Clone(proof.Root),
+		Root: proof.Root,
+		Key:  proof.Key,
 		Path: path,
 	}
 }
@@ -482,22 +533,23 @@ func (proof *PublicInclusionExclusionProof) ToInternalProof() *InclusionExclusio
 	path := make([]*ProofNode, len(proof.Path))
 	for i, tuple := range proof.Path {
 		proofNode := &ProofNode{
-			Path: slices.Clone(tuple[0]),
+			Path: tuple[0],
 			Hash: nil,
 			Data: nil,
 		}
 
 		if i == 0 {
-			proofNode.Data = slices.Clone(tuple[1])
+			proofNode.Data = tuple[1]
 		} else {
-			proofNode.Hash = slices.Clone(tuple[1])
+			proofNode.Hash = tuple[1]
 		}
 
 		path[i] = proofNode
 	}
 
 	return &InclusionExclusionProof{
-		Root: slices.Clone(proof.Root),
+		Root: proof.Root,
+		Key:  proof.Key,
 		Path: path,
 	}
 }
@@ -531,7 +583,7 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 		return false, fmt.Errorf("calculated root hash does not match provided root hash")
 	}
 
-	if err := t.verifyLeafPathMatchesLeafKey(proof); err != nil {
+	if err := verifyLeafPathMatchesProofKey(proof, t.HashAlgo); err != nil {
 		return false, err
 	}
 
@@ -609,75 +661,24 @@ func buildFullLeafPathFromProof(proof *InclusionExclusionProof) (*Path, error) {
 	return path, nil
 }
 
-func (t *SMT) findLeafByFullPath(fullPath *Path) (*Node, error) {
-	if fullPath == nil {
-		return nil, fmt.Errorf("full path is nil")
-	}
-
-	current := t.GetRoot()
-	pathOffset := 0
-	depth := 0
-
-	for current != nil && !current.IsLeaf {
-		if pathOffset >= pathBitLen(fullPath) {
-			return nil, fmt.Errorf("path exhausted before reaching leaf")
-		}
-
-		goLeft := pathBit(fullPath, pathOffset) == 0
-
-		var child *Node
-		if goLeft {
-			child = current.LeftNode
-		} else {
-			child = current.RightNode
-		}
-		if child == nil {
-			return nil, fmt.Errorf("missing child for path at depth %d", depth)
-		}
-
-		commonPrefixLen := pathCommonPrefixLenAt(child.Path, 0, fullPath, pathOffset)
-		if commonPrefixLen != pathBitLen(child.Path) {
-			return nil, fmt.Errorf("path mismatch at depth %d", depth)
-		}
-
-		pathOffset += commonPrefixLen
-		depth += commonPrefixLen
-		current = child
-	}
-
-	if current == nil || !current.IsLeaf {
-		return nil, fmt.Errorf("leaf not found for calculated path")
-	}
-
-	if pathOffset != pathBitLen(fullPath) {
-		return nil, fmt.Errorf("calculated path has extra bits past located leaf")
-	}
-
-	return current, nil
-}
-
-func (t *SMT) verifyLeafPathMatchesLeafKey(proof *InclusionExclusionProof) error {
+func verifyLeafPathMatchesProofKey(proof *InclusionExclusionProof, hashAlgo utils.HashAlgo) error {
 	fullPath, err := buildFullLeafPathFromProof(proof)
 	if err != nil {
 		return err
 	}
 
-	keyBitLen := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
+	keyBitLen := utils.GetHashAlgoOutputBitCount(hashAlgo)
 	if pathBitLen(fullPath) != keyBitLen {
 		return fmt.Errorf("calculated leaf path bit length %d does not match key bit length %d", pathBitLen(fullPath), keyBitLen)
 	}
-
-	leaf, findLeafErr := t.findLeafByFullPath(fullPath)
-	if findLeafErr != nil {
-		return findLeafErr
-	}
-	if len(leaf.Key) == 0 {
-		return fmt.Errorf("located leaf has empty key")
+	if len(proof.Key) != keyBitLen/8 {
+		return fmt.Errorf("proof key length %d does not match expected %d", len(proof.Key), keyBitLen/8)
 	}
 
-	leafKeyPath := pathFromKeyBytes(leaf.Key, len(leaf.Key)*8)
-	if !pathEqual(leafKeyPath, fullPath) {
-		return fmt.Errorf("calculated leaf path does not match leaf key")
+	for bitIdx := 0; bitIdx < keyBitLen; bitIdx++ {
+		if pathBit(fullPath, bitIdx) != keyPathBit(proof.Key, bitIdx) {
+			return fmt.Errorf("calculated leaf path does not match proof key")
+		}
 	}
 
 	return nil
@@ -1171,24 +1172,23 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 
 func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionProof, error) {
 	rootNode := t.GetRoot()
-	proof := &InclusionExclusionProof{
-		Path: []*ProofNode{},
-		Root: rootNode.GetHash(),
-	}
-
 	if rootNode.LeftNode == nil && rootNode.RightNode == nil {
 		return nil, fmt.Errorf("Cannot generate inclusion proof for an empty tree")
 	}
 
 	keyBitSize := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
-	fullKeyPath := pathFromKeyBytes(key, keyBitSize)
+	proof := &InclusionExclusionProof{
+		Root: rootNode.GetHash(),
+		Key:  key,
+		Path: make([]*ProofNode, 0, keyBitSize+1),
+	}
 
 	i := 0
 	currNode := rootNode
 	pathMismatch := false
 
 	for i < keyBitSize && currNode != nil && !currNode.IsLeaf {
-		goLeft := pathBit(fullKeyPath, i) == 0
+		goLeft := keyPathBit(key, i) == 0
 
 		proofNode := &ProofNode{
 			Path: currNode.encodedPathForProof(),
@@ -1215,7 +1215,7 @@ func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionPr
 			break
 		}
 
-		commonPrefixLen := pathCommonPrefixLenAt(nextNode.Path, 0, fullKeyPath, i)
+		commonPrefixLen := pathCommonPrefixLenAtKey(nextNode.Path, 0, key, i, keyBitSize)
 		i += commonPrefixLen
 		currNode = nextNode
 

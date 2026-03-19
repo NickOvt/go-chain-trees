@@ -33,6 +33,9 @@ func TestSMT_GenerateInclusionExclusionProof_Inclusion_LeafToRootOrderAndHashCha
 	if !bytes.Equal(proof.Root, tree.GetRoot().Hash) {
 		t.Fatalf("proof root hash mismatch")
 	}
+	if !bytes.Equal(proof.Key, targetHash) {
+		t.Fatalf("proof key mismatch")
+	}
 
 	first := proof.Path[0]
 	if len(first.Data) == 0 {
@@ -156,6 +159,9 @@ func TestSMT_InclusionExclusionProof_ToPublicProof_ReturnsRootAndPathTuples(t *t
 	}
 	if !bytes.Equal(publicProof.Root, proof.Root) {
 		t.Fatalf("public proof root mismatch")
+	}
+	if !bytes.Equal(publicProof.Key, proof.Key) {
+		t.Fatalf("public proof key mismatch")
 	}
 	if len(publicProof.Path) != len(proof.Path) {
 		t.Fatalf("public proof path length mismatch")
@@ -284,7 +290,7 @@ func TestSMT_VerifyPublicProof_TamperedRoot(t *testing.T) {
 	}
 }
 
-func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchLeafKey(t *testing.T) {
+func TestSMT_VerifyPublicProof_TamperedKey(t *testing.T) {
 	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 
@@ -298,20 +304,42 @@ func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchLeafKey(t *testing.T) {
 		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
 	}
 
-	leaf := findLeafByKeyHash(tree.GetRoot(), targetHash)
-	if leaf == nil {
-		t.Fatalf("failed to find target leaf in tree")
+	publicProof := proof.ToPublicProof()
+	publicProof.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
+
+	valid, err := tree.VerifyPublicProof(publicProof)
+	if err == nil {
+		t.Fatalf("expected error for tampered public proof key")
 	}
-	leaf.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
+	if valid {
+		t.Fatalf("expected tampered public proof to be invalid")
+	}
+}
+
+func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchProofKey(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	proof.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
 
 	valid, err := tree.VerifyProof(proof)
 	if err == nil {
-		t.Fatalf("expected verify error when leaf key does not match calculated path")
+		t.Fatalf("expected verify error when proof key does not match calculated path")
 	}
 	if valid {
-		t.Fatalf("expected invalid proof when leaf key is inconsistent with path")
+		t.Fatalf("expected invalid proof when proof key is inconsistent with path")
 	}
-	if !strings.Contains(err.Error(), "does not match leaf key") {
+	if !strings.Contains(err.Error(), "does not match proof key") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
