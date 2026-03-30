@@ -50,6 +50,20 @@ func newProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioNa
 	return options
 }
 
+func newOrderedPrehashedProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.AVLHASHTREE, buildCount, sampleSize)
+	options.ScenarioName = scenarioName
+	options.UseOrderedPrehashedKeys = true
+	return options
+}
+
+func newOrderedPrehashedExistingKeyInsertBenchmarkOptions(prebuildCount int, insertCount int, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, prebuildCount, insertCount)
+	options.ScenarioName = scenarioName
+	options.UseOrderedPrehashedKeys = true
+	return options
+}
+
 func TestMain(m *testing.M) {
 	// Run all tests
 	now = time.Now()
@@ -191,8 +205,16 @@ func TestAVL_ProofOnly_1M_Sample5Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(1_000_000, 0.05, "proof_only_after_1m_build_sample_5pct"))
 }
 
+func TestAVL_PrehashedOrdered_ProofOnly_1M_Sample5Pct(t *testing.T) {
+	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(1_000_000, 0.05, "prehashed_ordered_proof_only_after_1m_build_sample_5pct"))
+}
+
 func TestAVL_ProofOnly_5M_Sample3Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(5_000_000, 0.03, "proof_only_after_5m_build_sample_3pct"))
+}
+
+func TestAVL_PrehashedOrdered_ProofOnly_5M_Sample3Pct(t *testing.T) {
+	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(5_000_000, 0.03, "prehashed_ordered_proof_only_after_5m_build_sample_3pct"))
 }
 
 func TestAVL_ProofOnly_10M_Sample2Pct(t *testing.T) {
@@ -219,12 +241,20 @@ func TestAVL_1MThenReinsert200k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 1_000_000, 200_000))
 }
 
+func TestAVL_PrehashedOrdered_1MThenReinsert200k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_reinsert_200k_existing"))
+}
+
 func TestAVL_2MThenReinsert400k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 2_000_000, 400_000))
 }
 
 func TestAVL_5MThenReinsert1M_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 5_000_000, 1_000_000))
+}
+
+func TestAVL_PrehashedOrdered_5MThenReinsert1M_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(5_000_000, 1_000_000, "prehashed_ordered_build_5m_then_reinsert_1m_existing"))
 }
 
 func TestAVL_10MThenReinsert2M_ExistingElements(t *testing.T) {

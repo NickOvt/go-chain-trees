@@ -50,6 +50,20 @@ func newProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioNa
 	return options
 }
 
+func newOrderedPrehashedProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.SMT, buildCount, sampleSize)
+	options.ScenarioName = scenarioName
+	options.UseOrderedPrehashedKeys = true
+	return options
+}
+
+func newOrderedPrehashedExistingKeyInsertBenchmarkOptions(prebuildCount int, insertCount int, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, prebuildCount, insertCount)
+	options.ScenarioName = scenarioName
+	options.UseOrderedPrehashedKeys = true
+	return options
+}
+
 func TestMain(m *testing.M) {
 	// Run all tests
 	now = time.Now()
@@ -194,8 +208,16 @@ func TestSMT_ProofOnly_1M_Sample5Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(1_000_000, 0.05, "proof_only_after_1m_build_sample_5pct"))
 }
 
+func TestSMT_PrehashedOrdered_ProofOnly_1M_Sample5Pct(t *testing.T) {
+	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(1_000_000, 0.05, "prehashed_ordered_proof_only_after_1m_build_sample_5pct"))
+}
+
 func TestSMT_ProofOnly_5M_Sample3Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(5_000_000, 0.03, "proof_only_after_5m_build_sample_3pct"))
+}
+
+func TestSMT_PrehashedOrdered_ProofOnly_5M_Sample3Pct(t *testing.T) {
+	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(5_000_000, 0.03, "prehashed_ordered_proof_only_after_5m_build_sample_3pct"))
 }
 
 func TestSMT_ProofOnly_10M_Sample2Pct(t *testing.T) {
@@ -222,12 +244,20 @@ func TestSMT_1MThenReinsert200k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 1_000_000, 200_000))
 }
 
+func TestSMT_PrehashedOrdered_1MThenReinsert200k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_reinsert_200k_existing"))
+}
+
 func TestSMT_2MThenReinsert400k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 2_000_000, 400_000))
 }
 
 func TestSMT_5MThenReinsert1M_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 5_000_000, 1_000_000))
+}
+
+func TestSMT_PrehashedOrdered_5MThenReinsert1M_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(5_000_000, 1_000_000, "prehashed_ordered_build_5m_then_reinsert_1m_existing"))
 }
 
 func TestSMT_10MThenReinsert2M_ExistingElements(t *testing.T) {
