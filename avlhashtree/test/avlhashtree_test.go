@@ -29,6 +29,21 @@ func newInsertOnlyBenchmarkOptions(elementCount int, scenarioName string) *test_
 	}
 }
 
+func newOrderedPrehashedBenchmarkOptions(elementCount int, scenarioName string) *test_interfaces.BenchmarkOptions {
+	return &test_interfaces.BenchmarkOptions{
+		TreeType:                test_interfaces.AVLHASHTREE,
+		ScenarioName:            scenarioName,
+		CPUProfile:              true,
+		ElementCount:            elementCount,
+		SampleSize:              0.01,
+		MeasureInserts:          true,
+		IncludeInclusionProof:   true,
+		BlockSizeBytes:          32,
+		DataSizeBytes:           8,
+		UseOrderedPrehashedKeys: true,
+	}
+}
+
 func newProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
 	options := test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.AVLHASHTREE, buildCount, sampleSize)
 	options.ScenarioName = scenarioName
@@ -88,12 +103,20 @@ func TestAVL_1M(t *testing.T) {
 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 1_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
 }
 
+func TestAVL_PrehashedOrdered_1M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(1_000_000, "prehashed_ordered_build_1m"))
+}
+
 func TestAVL_2M(t *testing.T) {
 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 2_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
 }
 
 func TestAVL_5M(t *testing.T) {
 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.AVLHASHTREE, CPUProfile: true, ElementCount: 5_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+}
+
+func TestAVL_PrehashedOrdered_5M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(5_000_000, "prehashed_ordered_build_5m"))
 }
 
 func TestAVL_10M(t *testing.T) {

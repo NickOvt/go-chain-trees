@@ -837,6 +837,21 @@ func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
 	return true, nil
 }
 
+// InsertHashed inserts data using an already-hashed key without hashing it again.
+func (t *SMT) InsertHashed(keyHash utils.Hash, data []byte) (bool, error) {
+	chosenPath := chooseNewPath(keyHash, nil)
+	if pathBitLen(chosenPath) <= 0 {
+		return false, fmt.Errorf("cannot insert with empty path")
+	}
+
+	_, err := t.insertPrepared(t.GetRoot(), chosenPath, 0, keyHash, data, t.AppendOnly)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 // PrintTree writes a visual representation of the SMT to stdout.
 // Branch nodes display their decoded raw path bitstrings, while leaf nodes
 // display their hashes (and paths too).

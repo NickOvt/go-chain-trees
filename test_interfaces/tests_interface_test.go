@@ -1,8 +1,11 @@
 package test_interfaces
 
 import (
+	"bytes"
 	"testing"
 	"time"
+
+	"github.com/NickOvt/go-chain-trees/utils"
 )
 
 func TestCalculateTimeBucketsFromDurations_ExactDeciles(t *testing.T) {
@@ -56,5 +59,55 @@ func TestCalculateTimeBucketsFromDurations_UnevenDistribution(t *testing.T) {
 	}
 	if buckets[9].AvgDuration != 11*time.Millisecond {
 		t.Fatalf("expected last bucket avg 11ms, got %v", buckets[9].AvgDuration)
+	}
+}
+
+func TestSortPrehashedKeysForTree_AVLUsesByteComparison(t *testing.T) {
+	keys := []utils.Hash{
+		{0x02, 0x00},
+		{0x01, 0xff},
+		{0x01, 0x00},
+	}
+
+	if err := sortPrehashedKeysForTree(AVLHASHTREE, keys); err != nil {
+		t.Fatalf("sortPrehashedKeysForTree returned error: %v", err)
+	}
+
+	want := []utils.Hash{
+		{0x01, 0x00},
+		{0x01, 0xff},
+		{0x02, 0x00},
+	}
+
+	for idx := range want {
+		if !bytes.Equal(keys[idx], want[idx]) {
+			t.Fatalf("unexpected AVL order at %d: got %x want %x", idx, keys[idx], want[idx])
+		}
+	}
+}
+
+func TestSortPrehashedKeysForTree_SMTUsesLSBPathOrder(t *testing.T) {
+	keys := []utils.Hash{
+		{0x01},
+		{0x80},
+		{0x02},
+		{0x40},
+	}
+
+	if err := sortPrehashedKeysForTree(SMT, keys); err != nil {
+		t.Fatalf("sortPrehashedKeysForTree returned error: %v", err)
+	}
+
+	want := []utils.Hash{
+		{0x80},
+		{0x40},
+		{0x02},
+		{0x01},
+	}
+
+	for idx := range want {
+		if !bytes.Equal(keys[idx], want[idx]) {
+			t.Fatalf("unexpected SMT order at %d: got %x want %x", idx, keys[idx], want[idx])
+		}
 	}
 }

@@ -1,14 +1,17 @@
 package test_interfaces
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/bits"
 	randMath "math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +92,7 @@ type BenchmarkOptions struct {
 	HashAlgo                 utils.HashAlgo
 	DeleteSequential         bool
 	DisableSMTAppendOnly     bool
+	UseOrderedPrehashedKeys  bool
 	CPUProfile               bool
 }
 
@@ -130,6 +134,12 @@ type benchmarkProfiler struct {
 	cpuFile  *os.File
 	started  bool
 	enabled  bool
+}
+
+type orderedPrehashedKeyProvider struct {
+	keys         []utils.Hash
+	nextFreshIdx int
+	nextReuseIdx int
 }
 
 type keySampleCollector struct {
@@ -640,6 +650,93 @@ func buildSelectionIndices(totalCount int, selectionCount int, sequential bool) 
 	return indices
 }
 
+func compareHashesBySMTPathOrder(a utils.Hash, b utils.Hash) int {
+	for offset := 0; offset < len(a) && offset < len(b); offset++ {
+		aByte := bits.Reverse8(a[len(a)-1-offset])
+		bByte := bits.Reverse8(b[len(b)-1-offset])
+
+		if aByte < bByte {
+			return -1
+		}
+		if aByte > bByte {
+			return 1
+		}
+	}
+
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func sortPrehashedKeysForTree(treeType string, keys []utils.Hash) error {
+	switch strings.ToLower(treeType) {
+	case AVLHASHTREE:
+		sort.Slice(keys, func(i int, j int) bool {
+			return bytes.Compare(keys[i], keys[j]) < 0
+		})
+	case SMT:
+		sort.Slice(keys, func(i int, j int) bool {
+			return compareHashesBySMTPathOrder(keys[i], keys[j]) < 0
+		})
+	default:
+		return fmt.Errorf("cannot sort prehashed keys for unknown tree type %q", treeType)
+	}
+
+	return nil
+}
+
+func buildOrderedPrehashedKeys(treeType string, count int) ([]utils.Hash, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+
+	nextKey := GetCounterKeyFunc()
+	keys := make([]utils.Hash, count)
+	for idx := 0; idx < count; idx++ {
+		keys[idx] = nextKey()
+	}
+
+	if err := sortPrehashedKeysForTree(treeType, keys); err != nil {
+		return nil, err
+	}
+
+	return keys, nil
+}
+
+func newOrderedPrehashedKeyProvider(treeType string, count int) (*orderedPrehashedKeyProvider, error) {
+	keys, err := buildOrderedPrehashedKeys(treeType, count)
+	if err != nil {
+		return nil, err
+	}
+
+	return &orderedPrehashedKeyProvider{keys: keys}, nil
+}
+
+func (provider *orderedPrehashedKeyProvider) nextFreshKey() utils.Hash {
+	if provider == nil || provider.nextFreshIdx >= len(provider.keys) {
+		return nil
+	}
+
+	key := provider.keys[provider.nextFreshIdx]
+	provider.nextFreshIdx++
+	return key
+}
+
+func (provider *orderedPrehashedKeyProvider) nextExistingKey() utils.Hash {
+	if provider == nil || provider.nextReuseIdx >= len(provider.keys) {
+		return nil
+	}
+
+	key := provider.keys[provider.nextReuseIdx]
+	provider.nextReuseIdx++
+	return key
+}
+
 func newDataGenerator(dataSize int, counterStart int64) func() []byte {
 	dataHashFn := GetCounterKeyFuncFrom(counterStart)
 
@@ -861,17 +958,31 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		avl := avlhashtree.NewAVLHashTree(options.HashAlgo)
 
 		insertFn = func(key utils.Hash, data []byte) error {
+			if options.UseOrderedPrehashedKeys {
+				return avl.InsertHashed(key, data)
+			}
 			return avl.Insert(key, data)
 		}
 
 		deleteFn = func(key utils.Hash) error {
+			if options.UseOrderedPrehashedKeys {
+				return avl.Delete(key)
+			}
 			return avl.DeleteByKey(key)
 		}
 
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			proof, err := avl.GenerateInclusionExclusionProofByKey(key)
+			var (
+				proof *avlhashtree.CryptographicProof
+				err   error
+			)
+			if options.UseOrderedPrehashedKeys {
+				proof, err = avl.GenerateInclusionExclusionProof(key)
+			} else {
+				proof, err = avl.GenerateInclusionExclusionProofByKey(key)
+			}
 			if err != nil {
 				return 0, 0, 0, err
 			}
@@ -905,7 +1016,18 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		smtTree := smt.NewSMT(options.HashAlgo, appendOnly)
 
 		insertFn = func(key utils.Hash, data []byte) error {
-			_, err := smtTree.Insert(key, data)
+			var (
+				inserted bool
+				err      error
+			)
+			if options.UseOrderedPrehashedKeys {
+				inserted, err = smtTree.InsertHashed(key, data)
+			} else {
+				inserted, err = smtTree.Insert(key, data)
+			}
+			if !inserted && err == nil {
+				return fmt.Errorf("smt insert reported unsuccessful insertion")
+			}
 			return err
 		}
 
@@ -916,7 +1038,10 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			proofKey := utils.GenerateHash(options.HashAlgo, key)
+			proofKey := key
+			if !options.UseOrderedPrehashedKeys {
+				proofKey = utils.GenerateHash(options.HashAlgo, key)
+			}
 			proof, err := smtTree.GenerateInclusionExclusionProof(proofKey)
 			if err != nil {
 				return 0, 0, 0, err
@@ -952,6 +1077,19 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	}
 
 	sampleKeyFn := GetCounterKeyFunc()
+	existingKeyFn := GetCounterKeyFunc()
+	exclusionKeyFn := sampleKeyFn
+	if options.UseOrderedPrehashedKeys {
+		keyProvider, err := newOrderedPrehashedKeyProvider(treeType, totalDistinctElements)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sampleKeyFn = keyProvider.nextFreshKey
+		existingKeyFn = keyProvider.nextExistingKey
+		exclusionKeyFn = GetCounterKeyFuncFrom(int64(totalDistinctElements))
+	}
+
 	nextInsertData := newDataGenerator(options.DataSizeBytes, 0)
 	nextExistingInsertData := newDataGenerator(options.DataSizeBytes, int64(totalDistinctElements))
 
@@ -1007,7 +1145,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		)
 
 		if options.MeasureExistingInserts {
-			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, GetCounterKeyFunc(), nextExistingInsertData, insertFn)
+			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, existingKeyFn, nextExistingInsertData, insertFn)
 		} else {
 			insertMetrics, err = runFreshInsertBatch(options.ElementCount, &globalIndex, sampleKeyFn, nextInsertData, insertFn, collector, true)
 		}
@@ -1032,8 +1170,8 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 
 	if options.IncludeExclusionProof {
 		exclusionKeys := make([]utils.Hash, proofSampleSize)
-		for idx := range proofSampleSize {
-			exclusionKeys[idx] = sampleKeyFn()
+		for idx := 0; idx < proofSampleSize; idx++ {
+			exclusionKeys[idx] = exclusionKeyFn()
 		}
 		results["exclusionProof"] = measureProofBatch(t, exclusionKeys, proveAndVerifyFn)
 	}
