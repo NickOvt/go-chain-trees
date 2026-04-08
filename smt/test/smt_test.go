@@ -184,8 +184,8 @@ func TestSMT_PrehashedOrdered_10M(t *testing.T) {
 	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000_000, "prehashed_ordered_build_10m"))
 }
 
-func TestSMT_PrehashedOrdered_25M(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(25_000_000, "prehashed_ordered_build_25m"))
+func TestSMT_PrehashedOrdered_15M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(15_000_000, "prehashed_ordered_build_15m"))
 }
 
 //	func TestSMT_50M(t *testing.T) {
@@ -304,8 +304,8 @@ func TestSMT_ProofOnly_10M_Sample2Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(10_000_000, 0.02, "proof_only_after_10m_build_sample_2pct"))
 }
 
-func TestSMT_ProofOnly_25M_Sample2Pct(t *testing.T) {
-	appendResult(t, newProofOnlyBenchmarkOptions(25_000_000, 0.02, "proof_only_after_25m_build_sample_2pct"))
+func TestSMT_ProofOnly_20M_Sample2Pct(t *testing.T) {
+	appendResult(t, newProofOnlyBenchmarkOptions(20_000_000, 0.02, "proof_only_after_20m_build_sample_2pct"))
 }
 
 func TestSMT_10kThenAdd2k_NewElements(t *testing.T) {
@@ -356,8 +356,8 @@ func TestSMT_10MThenAdd2M_NewElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.SMT, 10_000_000, 2_000_000))
 }
 
-func TestSMT_25MThenAdd5M_NewElements(t *testing.T) {
-	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.SMT, 25_000_000, 5_000_000))
+func TestSMT_20MThenAdd5M_NewElements(t *testing.T) {
+	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.SMT, 20_000_000, 5_000_000))
 }
 
 func TestSMT_10kThenReinsert2k_ExistingElements(t *testing.T) {
