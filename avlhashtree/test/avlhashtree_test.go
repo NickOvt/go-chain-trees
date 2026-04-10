@@ -1,5 +1,8 @@
 package test
 
+// TODO: Testida: Random insert only, siis random proof only
+// ordered insert only (hetkel on sama mis full build + proof)
+
 import (
 	"os"
 	"testing"

@@ -802,6 +802,9 @@ func runFreshInsertBatch(
 		return InsertDeleteMetrics{}, nil
 	}
 
+
+	// TODO: find how many heap object in general was created during the whole phase and also keep heapobject after end of test (how many left)
+
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 
