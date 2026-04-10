@@ -37,7 +37,7 @@ func newOrderedPrehashedBenchmarkOptions(elementCount int, scenarioName string) 
 		ElementCount:            elementCount,
 		SampleSize:              0.01,
 		MeasureInserts:          true,
-		IncludeInclusionProof:   true,
+		IncludeInclusionProof:   false,
 		BlockSizeBytes:          32,
 		DataSizeBytes:           8,
 		UseOrderedPrehashedKeys: true,
@@ -50,15 +50,22 @@ func newProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioNa
 	return options
 }
 
-func newOrderedPrehashedProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
-	options := test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.SMT, buildCount, sampleSize)
+// func newOrderedPrehashedProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
+// 	options := test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.SMT, buildCount, sampleSize)
+// 	options.ScenarioName = scenarioName
+// 	options.UseOrderedPrehashedKeys = true
+// 	return options
+// }
+
+func newOrderedPrehashedExistingKeyInsertBenchmarkOptions(prebuildCount int, insertCount int, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, prebuildCount, insertCount)
 	options.ScenarioName = scenarioName
 	options.UseOrderedPrehashedKeys = true
 	return options
 }
 
-func newOrderedPrehashedExistingKeyInsertBenchmarkOptions(prebuildCount int, insertCount int, scenarioName string) *test_interfaces.BenchmarkOptions {
-	options := test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, prebuildCount, insertCount)
+func newOrderedPrehashedPostBuildInsertBenchmarkOptions(prebuildCount int, insertCount int, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.SMT, prebuildCount, insertCount)
 	options.ScenarioName = scenarioName
 	options.UseOrderedPrehashedKeys = true
 	return options
@@ -80,121 +87,170 @@ func TestMain(m *testing.M) {
 
 // 1.
 // ------------------------------
-// func TestSMT_10(t *testing.T) {
-// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10, SampleSize: 1, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+
+// func TestSMT_10k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
 // }
 
-func TestSMT_10k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// func TestSMT_50k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_100k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 100_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_200k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 200_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_300k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 300_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_500k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 500_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_700k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 700_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_900k(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 900_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_1M(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 1_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_2M(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 2_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_5M(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 5_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_10M(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_25M(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 25_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
+
+// func TestSMT_PrehashedOrdered_10k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000, "prehashed_ordered_build_10k"))
+// }
+
+// func TestSMT_PrehashedOrdered_50k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(50_000, "prehashed_ordered_build_50k"))
+// }
+
+// func TestSMT_PrehashedOrdered_100k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(100_000, "prehashed_ordered_build_100k"))
+// }
+
+// func TestSMT_PrehashedOrdered_200k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(200_000, "prehashed_ordered_build_200k"))
+// }
+
+// func TestSMT_PrehashedOrdered_300k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(300_000, "prehashed_ordered_build_300k"))
+// }
+
+// func TestSMT_PrehashedOrdered_500k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(500_000, "prehashed_ordered_build_500k"))
+// }
+
+// func TestSMT_PrehashedOrdered_700k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(700_000, "prehashed_ordered_build_700k"))
+// }
+
+// func TestSMT_PrehashedOrdered_900k(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(900_000, "prehashed_ordered_build_900k"))
+// }
+
+// func TestSMT_PrehashedOrdered_1M(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(1_000_000, "prehashed_ordered_build_1m"))
+// }
+
+// func TestSMT_PrehashedOrdered_2M(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(2_000_000, "prehashed_ordered_build_2m"))
+// }
+
+// func TestSMT_PrehashedOrdered_5M(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(5_000_000, "prehashed_ordered_build_5m"))
+// }
+
+// func TestSMT_PrehashedOrdered_10M(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000_000, "prehashed_ordered_build_10m"))
+// }
+
+// func TestSMT_PrehashedOrdered_25m(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedBenchmarkOptions(25_000_000, "prehashed_ordered_build_25m"))
+// }
+
+func TestSMT_PrehashedOrdered_InsertOnly_10k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000, "prehashed_ordered_insert_only_10k"))
 }
 
-func TestSMT_50k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 50_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_50k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(50_000, "prehashed_ordered_insert_only_50k"))
 }
 
-func TestSMT_100k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 100_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_100k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(100_000, "prehashed_ordered_insert_only_100k"))
 }
 
-func TestSMT_200k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 200_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_200k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(200_000, "prehashed_ordered_insert_only_200k"))
 }
 
-func TestSMT_300k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 300_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_300k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(300_000, "prehashed_ordered_insert_only_300k"))
 }
 
-func TestSMT_500k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 500_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_500k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(500_000, "prehashed_ordered_insert_only_500k"))
 }
 
-func TestSMT_700k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 700_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_700k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(700_000, "prehashed_ordered_insert_only_700k"))
 }
 
-func TestSMT_900k(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 900_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_900k(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(900_000, "prehashed_ordered_insert_only_900k"))
 }
 
-func TestSMT_1M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 1_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_1M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(1_000_000, "prehashed_ordered_insert_only_1m"))
 }
 
-func TestSMT_2M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 2_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_2M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(2_000_000, "prehashed_ordered_insert_only_2m"))
 }
 
-func TestSMT_5M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 5_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_5M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(5_000_000, "prehashed_ordered_insert_only_5m"))
 }
 
-func TestSMT_10M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_10M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000_000, "prehashed_ordered_insert_only_10m"))
 }
 
-func TestSMT_25M(t *testing.T) {
-	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 25_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+func TestSMT_PrehashedOrdered_InsertOnly_25M(t *testing.T) {
+	appendResult(t, newOrderedPrehashedBenchmarkOptions(25_000_000, "prehashed_ordered_insert_only_25m"))
 }
 
-func TestSMT_PrehashedOrdered_10k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000, "prehashed_ordered_build_10k"))
-}
-
-func TestSMT_PrehashedOrdered_50k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(50_000, "prehashed_ordered_build_50k"))
-}
-
-func TestSMT_PrehashedOrdered_100k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(100_000, "prehashed_ordered_build_100k"))
-}
-
-func TestSMT_PrehashedOrdered_200k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(200_000, "prehashed_ordered_build_200k"))
-}
-
-func TestSMT_PrehashedOrdered_300k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(300_000, "prehashed_ordered_build_300k"))
-}
-
-func TestSMT_PrehashedOrdered_500k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(500_000, "prehashed_ordered_build_500k"))
-}
-
-func TestSMT_PrehashedOrdered_700k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(700_000, "prehashed_ordered_build_700k"))
-}
-
-func TestSMT_PrehashedOrdered_900k(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(900_000, "prehashed_ordered_build_900k"))
-}
-
-func TestSMT_PrehashedOrdered_1M(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(1_000_000, "prehashed_ordered_build_1m"))
-}
-
-func TestSMT_PrehashedOrdered_2M(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(2_000_000, "prehashed_ordered_build_2m"))
-}
-
-func TestSMT_PrehashedOrdered_5M(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(5_000_000, "prehashed_ordered_build_5m"))
-}
-
-func TestSMT_PrehashedOrdered_10M(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(10_000_000, "prehashed_ordered_build_10m"))
-}
-
-func TestSMT_PrehashedOrdered_15M(t *testing.T) {
-	appendResult(t, newOrderedPrehashedBenchmarkOptions(15_000_000, "prehashed_ordered_build_15m"))
-}
-
-//	func TestSMT_50M(t *testing.T) {
-//		appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 50_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
-//	}
+//func TestSMT_50M(t *testing.T) {
+//	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 50_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+//}
 //
-//	func TestSMT_100M(t *testing.T) {
-//		appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 100_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
-//	}
+//func TestSMT_100M(t *testing.T) {
+//	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 100_000_000, SampleSize: 0.01, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+//}
 
 func TestSMT_InsertOnly_10k(t *testing.T) {
 	appendResult(t, newInsertOnlyBenchmarkOptions(10_000, "insert_only_build_10k"))
@@ -284,10 +340,6 @@ func TestSMT_ProofOnly_1M_Sample5Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(1_000_000, 0.05, "proof_only_after_1m_build_sample_5pct"))
 }
 
-func TestSMT_PrehashedOrdered_ProofOnly_1M_Sample5Pct(t *testing.T) {
-	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(1_000_000, 0.05, "prehashed_ordered_proof_only_after_1m_build_sample_5pct"))
-}
-
 func TestSMT_ProofOnly_2M_Sample3Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(2_000_000, 0.03, "proof_only_after_2m_build_sample_3pct"))
 }
@@ -296,17 +348,21 @@ func TestSMT_ProofOnly_5M_Sample3Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(5_000_000, 0.03, "proof_only_after_5m_build_sample_3pct"))
 }
 
-func TestSMT_PrehashedOrdered_ProofOnly_5M_Sample3Pct(t *testing.T) {
-	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(5_000_000, 0.03, "prehashed_ordered_proof_only_after_5m_build_sample_3pct"))
-}
-
 func TestSMT_ProofOnly_10M_Sample2Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(10_000_000, 0.02, "proof_only_after_10m_build_sample_2pct"))
 }
 
-func TestSMT_ProofOnly_20M_Sample2Pct(t *testing.T) {
-	appendResult(t, newProofOnlyBenchmarkOptions(20_000_000, 0.02, "proof_only_after_20m_build_sample_2pct"))
+func TestSMT_ProofOnly_25M_Sample2Pct(t *testing.T) {
+	appendResult(t, newProofOnlyBenchmarkOptions(25_000_000, 0.02, "proof_only_after_25m_build_sample_2pct"))
 }
+
+// func TestSMT_PrehashedOrdered_ProofOnly_1M_Sample5Pct(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(1_000_000, 0.05, "prehashed_ordered_proof_only_after_1m_build_sample_5pct"))
+// }
+
+// func TestSMT_PrehashedOrdered_ProofOnly_5M_Sample3Pct(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedProofOnlyBenchmarkOptions(5_000_000, 0.03, "prehashed_ordered_proof_only_after_5m_build_sample_3pct"))
+// }
 
 func TestSMT_10kThenAdd2k_NewElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.SMT, 10_000, 2_000))
@@ -360,6 +416,58 @@ func TestSMT_20MThenAdd5M_NewElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.SMT, 20_000_000, 5_000_000))
 }
 
+func TestSMT_PrehashedOrdered_10kThenAdd2k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(10_000, 2_000, "prehashed_ordered_build_10k_then_add_2k_new"))
+}
+
+func TestSMT_PrehashedOrdered_50kThenAdd10k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(50_000, 10_000, "prehashed_ordered_build_50k_then_add_10k_new"))
+}
+
+func TestSMT_PrehashedOrdered_100kThenAdd20k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(100_000, 20_000, "prehashed_ordered_build_100k_then_add_20k_new"))
+}
+
+func TestSMT_PrehashedOrdered_200kThenAdd40k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(200_000, 40_000, "prehashed_ordered_build_200k_then_add_40k_new"))
+}
+
+func TestSMT_PrehashedOrdered_300kThenAdd60k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(300_000, 60_000, "prehashed_ordered_build_300k_then_add_60k_new"))
+}
+
+func TestSMT_PrehashedOrdered_500kThenAdd100k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(500_000, 100_000, "prehashed_ordered_build_500k_then_add_100k_new"))
+}
+
+func TestSMT_PrehashedOrdered_700kThenAdd140k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(700_000, 140_000, "prehashed_ordered_build_700k_then_add_140k_new"))
+}
+
+func TestSMT_PrehashedOrdered_900kThenAdd180k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(900_000, 180_000, "prehashed_ordered_build_900k_then_add_180k_new"))
+}
+
+func TestSMT_PrehashedOrdered_1MThenAdd200k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_add_200k_new"))
+}
+
+func TestSMT_PrehashedOrdered_2MThenAdd400k_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(2_000_000, 400_000, "prehashed_ordered_build_2m_then_add_400k_new"))
+}
+
+func TestSMT_PrehashedOrdered_5MThenAdd1M_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(5_000_000, 1_000_000, "prehashed_ordered_build_5m_then_add_1m_new"))
+}
+
+func TestSMT_PrehashedOrdered_10MThenAdd2M_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(10_000_000, 2_000_000, "prehashed_ordered_build_10m_then_add_2m_new"))
+}
+
+func TestSMT_PrehashedOrdered_20MThenAdd5M_NewElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(20_000_000, 5_000_000, "prehashed_ordered_build_20m_then_add_5m_new"))
+}
+
 func TestSMT_10kThenReinsert2k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 10_000, 2_000))
 }
@@ -396,10 +504,6 @@ func TestSMT_1MThenReinsert200k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 1_000_000, 200_000))
 }
 
-func TestSMT_PrehashedOrdered_1MThenReinsert200k_ExistingElements(t *testing.T) {
-	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_reinsert_200k_existing"))
-}
-
 func TestSMT_2MThenReinsert400k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 2_000_000, 400_000))
 }
@@ -408,9 +512,9 @@ func TestSMT_5MThenReinsert1M_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 5_000_000, 1_000_000))
 }
 
-func TestSMT_PrehashedOrdered_5MThenReinsert1M_ExistingElements(t *testing.T) {
-	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(5_000_000, 1_000_000, "prehashed_ordered_build_5m_then_reinsert_1m_existing"))
-}
+// func TestSMT_PrehashedOrdered_5MThenReinsert1M_ExistingElements(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(5_000_000, 1_000_000, "prehashed_ordered_build_5m_then_reinsert_1m_existing"))
+// }
 
 func TestSMT_10MThenReinsert2M_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 10_000_000, 2_000_000))
@@ -419,3 +523,64 @@ func TestSMT_10MThenReinsert2M_ExistingElements(t *testing.T) {
 func TestSMT_25MThenReinsert5M_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.SMT, 25_000_000, 5_000_000))
 }
+
+// func TestSMT_PrehashedOrdered_1MThenReinsert200k_ExistingElements(t *testing.T) {
+// 	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_reinsert_200k_existing"))
+// }
+
+func TestSMT_PrehashedOrdered_10kThenReinsert2k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(10_000, 2_000, "prehashed_ordered_build_10k_then_reinsert_2k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_50kThenReinsert10k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(50_000, 10_000, "prehashed_ordered_build_50k_then_reinsert_10k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_100kThenReinsert20k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(100_000, 20_000, "prehashed_ordered_build_100k_then_reinsert_20k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_200kThenReinsert40k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(200_000, 40_000, "prehashed_ordered_build_200k_then_reinsert_40k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_300kThenReinsert60k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(300_000, 60_000, "prehashed_ordered_build_300k_then_reinsert_60k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_500kThenReinsert100k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(500_000, 100_000, "prehashed_ordered_build_500k_then_reinsert_100k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_700kThenReinsert140k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(700_000, 140_000, "prehashed_ordered_build_700k_then_reinsert_140k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_900kThenReinsert180k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(900_000, 180_000, "prehashed_ordered_build_900k_then_reinsert_180k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_1MThenReinsert200k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_reinsert_200k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_2MThenReinsert400k_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(2_000_000, 400_000, "prehashed_ordered_build_2m_then_reinsert_400k_existing"))
+}
+
+func TestSMT_PrehashedOrdered_5MThenReinsert1M_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(5_000_000, 1_000_000, "prehashed_ordered_build_5m_then_reinsert_1m_existing"))
+}
+
+func TestSMT_PrehashedOrdered_10MThenReinsert2M_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(10_000_000, 2_000_000, "prehashed_ordered_build_10m_then_reinsert_2m_existing"))
+}
+
+func TestSMT_PrehashedOrdered_25MThenReinsert5M_ExistingElements(t *testing.T) {
+	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(25_000_000, 5_000_000, "prehashed_ordered_build_25m_then_reinsert_5m_existing"))
+}
+
+// Historical SMT-only benchmark kept commented out.
+// func TestSMT_10(t *testing.T) {
+// 	appendResult(t, &test_interfaces.BenchmarkOptions{TreeType: test_interfaces.SMT, CPUProfile: true, ElementCount: 10, SampleSize: 1, MeasureInserts: true, IncludeInclusionProof: true, BlockSizeBytes: 32, DataSizeBytes: 8})
+// }
