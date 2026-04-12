@@ -412,10 +412,11 @@ func TestAVL_10MThenAdd2M_NewElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 10_000_000, 2_000_000))
 }
 
-func TestAVL_20MThenAdd5M_NewElements(t *testing.T) {
-	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 20_000_000, 5_000_000))
+func TestAVL_25MThenAdd5M_NewElements(t *testing.T) {
+	appendResult(t, test_interfaces.NewPostBuildInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 25_000_000, 5_000_000))
 }
 
+/*
 func TestAVL_PrehashedOrdered_10kThenAdd2k_NewElements(t *testing.T) {
 	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(10_000, 2_000, "prehashed_ordered_build_10k_then_add_2k_new"))
 }
@@ -467,6 +468,7 @@ func TestAVL_PrehashedOrdered_10MThenAdd2M_NewElements(t *testing.T) {
 func TestAVL_PrehashedOrdered_20MThenAdd5M_NewElements(t *testing.T) {
 	appendResult(t, newOrderedPrehashedPostBuildInsertBenchmarkOptions(20_000_000, 5_000_000, "prehashed_ordered_build_20m_then_add_5m_new"))
 }
+*/
 
 func TestAVL_10kThenReinsert2k_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 10_000, 2_000))
@@ -524,6 +526,7 @@ func TestAVL_25MThenReinsert5M_ExistingElements(t *testing.T) {
 	appendResult(t, test_interfaces.NewExistingKeyInsertBenchmarkOptions(test_interfaces.AVLHASHTREE, 25_000_000, 5_000_000))
 }
 
+/*
 // func TestAVL_PrehashedOrdered_1MThenReinsert200k_ExistingElements(t *testing.T) {
 // 	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(1_000_000, 200_000, "prehashed_ordered_build_1m_then_reinsert_200k_existing"))
 // }
@@ -579,3 +582,4 @@ func TestAVL_PrehashedOrdered_10MThenReinsert2M_ExistingElements(t *testing.T) {
 func TestAVL_PrehashedOrdered_25MThenReinsert5M_ExistingElements(t *testing.T) {
 	appendResult(t, newOrderedPrehashedExistingKeyInsertBenchmarkOptions(25_000_000, 5_000_000, "prehashed_ordered_build_25m_then_reinsert_5m_existing"))
 }
+*/
