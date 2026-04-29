@@ -111,3 +111,46 @@ func TestSortPrehashedKeysForTree_SMTUsesLSBPathOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestNewExclusionProofOnlyBenchmarkOptions(t *testing.T) {
+	options := NewExclusionProofOnlyBenchmarkOptions(SMT, 10_000, 0.05)
+
+	if options.TreeType != SMT {
+		t.Fatalf("expected tree type %q, got %q", SMT, options.TreeType)
+	}
+	if options.ScenarioName != "exclusion_proof_only_after_10k_build" {
+		t.Fatalf("unexpected scenario name: %q", options.ScenarioName)
+	}
+	if options.PrebuildElementCount != 10_000 {
+		t.Fatalf("expected prebuild count 10000, got %d", options.PrebuildElementCount)
+	}
+	if options.IncludeInclusionProof {
+		t.Fatalf("expected inclusion proofs to be disabled")
+	}
+	if !options.IncludeExclusionProof {
+		t.Fatalf("expected exclusion proofs to be enabled")
+	}
+	if options.SampleSize != 0.05 {
+		t.Fatalf("expected sample size 0.05, got %f", options.SampleSize)
+	}
+}
+
+func TestNormalizeBenchmarkOptions_ExclusionOnlyScenarioName(t *testing.T) {
+	options := &BenchmarkOptions{
+		TreeType:              AVLHASHTREE,
+		PrebuildElementCount:  50_000,
+		IncludeExclusionProof: true,
+	}
+
+	normalizeBenchmarkOptions(options)
+
+	if options.ScenarioName != "exclusion_proof_only_after_50k_build" {
+		t.Fatalf("unexpected scenario name: %q", options.ScenarioName)
+	}
+	if options.IncludeInclusionProof {
+		t.Fatalf("expected inclusion proofs to remain disabled")
+	}
+	if !options.IncludeExclusionProof {
+		t.Fatalf("expected exclusion proofs to remain enabled")
+	}
+}

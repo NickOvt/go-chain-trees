@@ -50,6 +50,12 @@ func newProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioNa
 	return options
 }
 
+func newExclusionProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
+	options := test_interfaces.NewExclusionProofOnlyBenchmarkOptions(test_interfaces.SMT, buildCount, sampleSize)
+	options.ScenarioName = scenarioName
+	return options
+}
+
 // func newOrderedPrehashedProofOnlyBenchmarkOptions(buildCount int, sampleSize float32, scenarioName string) *test_interfaces.BenchmarkOptions {
 // 	options := test_interfaces.NewProofOnlyBenchmarkOptions(test_interfaces.SMT, buildCount, sampleSize)
 // 	options.ScenarioName = scenarioName
@@ -354,6 +360,58 @@ func TestSMT_ProofOnly_10M_Sample2Pct(t *testing.T) {
 
 func TestSMT_ProofOnly_25M_Sample2Pct(t *testing.T) {
 	appendResult(t, newProofOnlyBenchmarkOptions(25_000_000, 0.02, "proof_only_after_25m_build_sample_2pct"))
+}
+
+func TestSMT_ExclusionProofOnly_10k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(10_000, 0.05, "exclusion_proof_only_after_10k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_50k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(50_000, 0.05, "exclusion_proof_only_after_50k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_100k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(100_000, 0.05, "exclusion_proof_only_after_100k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_200k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(200_000, 0.05, "exclusion_proof_only_after_200k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_300k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(300_000, 0.05, "exclusion_proof_only_after_300k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_500k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(500_000, 0.05, "exclusion_proof_only_after_500k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_700k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(700_000, 0.05, "exclusion_proof_only_after_700k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_900k_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(900_000, 0.05, "exclusion_proof_only_after_900k_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_1M_Sample5Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(1_000_000, 0.05, "exclusion_proof_only_after_1m_build_sample_5pct"))
+}
+
+func TestSMT_ExclusionProofOnly_2M_Sample3Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(2_000_000, 0.03, "exclusion_proof_only_after_2m_build_sample_3pct"))
+}
+
+func TestSMT_ExclusionProofOnly_5M_Sample3Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(5_000_000, 0.03, "exclusion_proof_only_after_5m_build_sample_3pct"))
+}
+
+func TestSMT_ExclusionProofOnly_10M_Sample2Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(10_000_000, 0.02, "exclusion_proof_only_after_10m_build_sample_2pct"))
+}
+
+func TestSMT_ExclusionProofOnly_25M_Sample2Pct(t *testing.T) {
+	appendResult(t, newExclusionProofOnlyBenchmarkOptions(25_000_000, 0.02, "exclusion_proof_only_after_25m_build_sample_2pct"))
 }
 
 // func TestSMT_PrehashedOrdered_ProofOnly_1M_Sample5Pct(t *testing.T) {

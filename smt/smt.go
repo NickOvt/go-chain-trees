@@ -534,8 +534,6 @@ func (proof *PublicInclusionExclusionProof) ToInternalProof() *InclusionExclusio
 	for i, tuple := range proof.Path {
 		proofNode := &ProofNode{
 			Path: tuple[0],
-			Hash: nil,
-			Data: nil,
 		}
 
 		if i == 0 {
@@ -555,7 +553,24 @@ func (proof *PublicInclusionExclusionProof) ToInternalProof() *InclusionExclusio
 }
 
 func (t *SMT) VerifyPublicProof(proof *PublicInclusionExclusionProof) (bool, error) {
-	return t.VerifyProof(proof.ToInternalProof())
+	internalProof := proof.ToInternalProof()
+	if internalProof == nil {
+		return false, nil
+	}
+
+	if valid, err := t.VerifyProof(internalProof); err == nil && valid {
+		return true, nil
+	}
+
+	if len(internalProof.Path) > 0 && internalProof.Path[0] != nil && len(internalProof.Path[0].Data) > 0 {
+		internalProof.Path[0].Hash = internalProof.Path[0].Data
+		internalProof.Path[0].Data = nil
+		if valid, err := t.VerifyProof(internalProof); err == nil && valid {
+			return true, nil
+		}
+	}
+
+	return false, fmt.Errorf("public proof is neither a valid inclusion nor exclusion proof")
 }
 
 func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
@@ -566,12 +581,114 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 	if len(proof.Path) == 0 {
 		return false, fmt.Errorf("proof path is empty")
 	}
-	if len(proof.Path) < 2 {
-		return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
-	}
 
 	if !bytes.Equal(proof.Root, t.GetRoot().GetHash()) {
 		return false, fmt.Errorf("given proof document contains invalid root hash")
+	}
+
+	if len(proof.Path[0].Data) > 0 {
+		if len(proof.Path) < 2 {
+			return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
+		}
+
+		recomputedRoot, err := t.recomputeRootFromProofBySpec(proof)
+		if err == nil && bytes.Equal(recomputedRoot, proof.Root) {
+			if err := verifyLeafPathMatchesProofKey(proof, t.HashAlgo); err == nil {
+				return true, nil
+			}
+		}
+	}
+
+	if valid, err := t.verifyExclusionProof(proof); err == nil && valid {
+		return true, nil
+	}
+
+	if len(proof.Path[0].Hash) > 0 {
+		proof.Path[0].Data = proof.Path[0].Hash
+		proof.Path[0].Hash = nil
+		defer func() {
+			proof.Path[0].Hash = proof.Path[0].Data
+			proof.Path[0].Data = nil
+		}()
+
+		if len(proof.Path) < 2 {
+			return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
+		}
+
+		recomputedRoot, err := t.recomputeRootFromProofBySpec(proof)
+		if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(recomputedRoot, proof.Root) {
+			return false, fmt.Errorf("calculated root hash does not match provided root hash")
+		}
+		if err := verifyLeafPathMatchesProofKey(proof, t.HashAlgo); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return t.verifyExclusionProof(proof)
+}
+
+func (t *SMT) verifyExclusionProof(proof *InclusionExclusionProof) (bool, error) {
+	if len(proof.Path) == 0 {
+		return false, fmt.Errorf("proof path is empty")
+	}
+
+	fullPath, err := buildFullLeafPathFromProof(proof)
+	if err != nil {
+		return false, err
+	}
+
+	if proof.Path[0] == nil {
+		return false, fmt.Errorf("proof contains nil node at index 0")
+	}
+
+	keyBitLen := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
+	if len(proof.Key) != keyBitLen/8 {
+		return false, fmt.Errorf("proof key length %d does not match expected %d", len(proof.Key), keyBitLen/8)
+	}
+
+	validateDivergence := func() error {
+		witnessPath, ok := decodeEncodedPath(proof.Path[0].Path)
+		if !ok {
+			return fmt.Errorf("proof path[0] is not a valid encoded path")
+		}
+		witnessBitLen := pathBitLen(witnessPath)
+		parentBitLen := pathBitLen(fullPath) - witnessBitLen
+		if witnessBitLen == 0 || parentBitLen < 0 {
+			return fmt.Errorf("exclusion proof witness path is invalid")
+		}
+		if !pathMatchesKey(fullPath, proof.Key, parentBitLen) {
+			return fmt.Errorf("exclusion proof parent path does not match proof key")
+		}
+		commonPrefixLen := pathCommonPrefixLenAtKey(witnessPath, 0, proof.Key, parentBitLen, keyBitLen)
+		if commonPrefixLen == 0 {
+			return fmt.Errorf("exclusion proof witness is not on the proof key branch")
+		}
+		if commonPrefixLen >= witnessBitLen {
+			return fmt.Errorf("exclusion proof witness path does not diverge from proof key")
+		}
+		return nil
+	}
+
+	switch {
+	case len(proof.Path[0].Data) > 0:
+		if pathMatchesKey(fullPath, proof.Key, keyBitLen) {
+			return false, fmt.Errorf("exclusion proof contains target leaf")
+		}
+		if err := validateDivergence(); err != nil {
+			return false, err
+		}
+	case len(proof.Path[0].Hash) == 0:
+		if !pathMatchesKey(fullPath, proof.Key, pathBitLen(fullPath)) {
+			return false, fmt.Errorf("empty exclusion proof path does not match proof key")
+		}
+	default:
+		if err := validateDivergence(); err != nil {
+			return false, err
+		}
 	}
 
 	recomputedRoot, err := t.recomputeRootFromProofBySpec(proof)
@@ -581,10 +698,6 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 
 	if !bytes.Equal(recomputedRoot, proof.Root) {
 		return false, fmt.Errorf("calculated root hash does not match provided root hash")
-	}
-
-	if err := verifyLeafPathMatchesProofKey(proof, t.HashAlgo); err != nil {
-		return false, err
 	}
 
 	return true, nil
@@ -684,15 +797,40 @@ func verifyLeafPathMatchesProofKey(proof *InclusionExclusionProof, hashAlgo util
 	return nil
 }
 
+func pathMatchesKey(path *Path, key []byte, bitLen int) bool {
+	if path == nil {
+		return bitLen == 0
+	}
+	if bitLen < 0 || bitLen > pathBitLen(path) {
+		return false
+	}
+	if bitLen > len(key)*8 {
+		return false
+	}
+
+	for bitIdx := 0; bitIdx < bitLen; bitIdx++ {
+		if pathBit(path, bitIdx) != keyPathBit(key, bitIdx) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (t *SMT) recomputeRootFromProofBySpec(proof *InclusionExclusionProof) (utils.Hash, error) {
 	if proof == nil || len(proof.Path) == 0 {
 		return nil, fmt.Errorf("cannot recompute root from empty proof")
 	}
-	if len(proof.Path[0].Data) == 0 {
-		return nil, fmt.Errorf("first proof node must contain leaf data for inclusion verification")
+	if proof.Path[0] == nil {
+		return nil, fmt.Errorf("proof contains nil node at index 0")
 	}
 
-	currentHash := t.calculateLeafNodeHash(proof.Path[0].Path, proof.Path[0].Data, nil)
+	var currentHash utils.Hash
+	if len(proof.Path[0].Data) > 0 {
+		currentHash = t.calculateLeafNodeHash(proof.Path[0].Path, proof.Path[0].Data, nil)
+	} else {
+		currentHash = proof.Path[0].Hash
+	}
 
 	for i := 1; i < len(proof.Path); i++ {
 		if proof.Path[i] == nil {
@@ -1226,6 +1364,11 @@ func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionPr
 		proof.Path = append(proof.Path, proofNode)
 
 		if nextNode == nil {
+			proof.Path = append(proof.Path, &ProofNode{
+				Path: pathSlice(pathFromKeyBytes(key, keyBitSize), i, 1).Encode(),
+				Hash: nil,
+				Data: nil,
+			})
 			currNode = nil
 			break
 		}

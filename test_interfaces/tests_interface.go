@@ -191,6 +191,19 @@ func NewProofOnlyBenchmarkOptions(treeType string, buildCount int, sampleSize fl
 	return options
 }
 
+func NewExclusionProofOnlyBenchmarkOptions(treeType string, buildCount int, sampleSize float32) *BenchmarkOptions {
+	options := newDefaultBenchmarkOptions(treeType)
+	options.ScenarioName = fmt.Sprintf("exclusion_proof_only_after_%s_build", formatCountLabel(buildCount))
+	options.PrebuildElementCount = buildCount
+	options.IncludeExclusionProof = true
+
+	if sampleSize > 0 {
+		options.SampleSize = sampleSize
+	}
+
+	return options
+}
+
 func NewPostBuildInsertBenchmarkOptions(treeType string, prebuildCount int, insertCount int) *BenchmarkOptions {
 	options := newDefaultBenchmarkOptions(treeType)
 	options.ScenarioName = fmt.Sprintf("build_%s_then_add_%s_new", formatCountLabel(prebuildCount), formatCountLabel(insertCount))
@@ -253,6 +266,8 @@ func normalizeBenchmarkOptions(options *BenchmarkOptions) {
 			options.ScenarioName = fmt.Sprintf("build_%s_then_reinsert_%s_existing", formatCountLabel(options.PrebuildElementCount), formatCountLabel(options.ElementCount))
 		case options.PrebuildElementCount > 0 && options.MeasureInserts:
 			options.ScenarioName = fmt.Sprintf("build_%s_then_add_%s_new", formatCountLabel(options.PrebuildElementCount), formatCountLabel(options.ElementCount))
+		case options.PrebuildElementCount > 0 && options.IncludeExclusionProof && !options.IncludeInclusionProof:
+			options.ScenarioName = fmt.Sprintf("exclusion_proof_only_after_%s_build", formatCountLabel(options.PrebuildElementCount))
 		case options.PrebuildElementCount > 0 && (options.IncludeInclusionProof || options.IncludeExclusionProof):
 			options.ScenarioName = fmt.Sprintf("proof_only_after_%s_build", formatCountLabel(options.PrebuildElementCount))
 		default:
