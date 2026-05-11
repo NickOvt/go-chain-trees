@@ -1,8 +1,11 @@
 package test_interfaces
 
 import (
+	"bytes"
 	"testing"
 	"time"
+
+	"github.com/NickOvt/go-chain-trees/utils"
 )
 
 func TestCalculateTimeBucketsFromDurations_ExactDeciles(t *testing.T) {
@@ -56,5 +59,98 @@ func TestCalculateTimeBucketsFromDurations_UnevenDistribution(t *testing.T) {
 	}
 	if buckets[9].AvgDuration != 11*time.Millisecond {
 		t.Fatalf("expected last bucket avg 11ms, got %v", buckets[9].AvgDuration)
+	}
+}
+
+func TestSortPrehashedKeysForTree_AVLUsesByteComparison(t *testing.T) {
+	keys := []utils.Hash{
+		{0x02, 0x00},
+		{0x01, 0xff},
+		{0x01, 0x00},
+	}
+
+	if err := sortPrehashedKeysForTree(AVLHASHTREE, keys); err != nil {
+		t.Fatalf("sortPrehashedKeysForTree returned error: %v", err)
+	}
+
+	want := []utils.Hash{
+		{0x01, 0x00},
+		{0x01, 0xff},
+		{0x02, 0x00},
+	}
+
+	for idx := range want {
+		if !bytes.Equal(keys[idx], want[idx]) {
+			t.Fatalf("unexpected AVL order at %d: got %x want %x", idx, keys[idx], want[idx])
+		}
+	}
+}
+
+func TestSortPrehashedKeysForTree_SMTUsesLSBPathOrder(t *testing.T) {
+	keys := []utils.Hash{
+		{0x01},
+		{0x80},
+		{0x02},
+		{0x40},
+	}
+
+	if err := sortPrehashedKeysForTree(SMT, keys); err != nil {
+		t.Fatalf("sortPrehashedKeysForTree returned error: %v", err)
+	}
+
+	want := []utils.Hash{
+		{0x80},
+		{0x40},
+		{0x02},
+		{0x01},
+	}
+
+	for idx := range want {
+		if !bytes.Equal(keys[idx], want[idx]) {
+			t.Fatalf("unexpected SMT order at %d: got %x want %x", idx, keys[idx], want[idx])
+		}
+	}
+}
+
+func TestNewExclusionProofOnlyBenchmarkOptions(t *testing.T) {
+	options := NewExclusionProofOnlyBenchmarkOptions(SMT, 10_000, 0.05)
+
+	if options.TreeType != SMT {
+		t.Fatalf("expected tree type %q, got %q", SMT, options.TreeType)
+	}
+	if options.ScenarioName != "exclusion_proof_only_after_10k_build" {
+		t.Fatalf("unexpected scenario name: %q", options.ScenarioName)
+	}
+	if options.PrebuildElementCount != 10_000 {
+		t.Fatalf("expected prebuild count 10000, got %d", options.PrebuildElementCount)
+	}
+	if options.IncludeInclusionProof {
+		t.Fatalf("expected inclusion proofs to be disabled")
+	}
+	if !options.IncludeExclusionProof {
+		t.Fatalf("expected exclusion proofs to be enabled")
+	}
+	if options.SampleSize != 0.05 {
+		t.Fatalf("expected sample size 0.05, got %f", options.SampleSize)
+	}
+}
+
+func TestNormalizeBenchmarkOptions_ExclusionOnlyScenarioName(t *testing.T) {
+	options := &BenchmarkOptions{
+		TreeType:              AVLHASHTREE,
+		PrebuildElementCount:  50_000,
+		IncludeExclusionProof: true,
+	}
+
+	normalizeBenchmarkOptions(options)
+
+	if options.ScenarioName != "exclusion_proof_only_after_50k_build" {
+		t.Fatalf("unexpected scenario name: %q", options.ScenarioName)
+	}
+	if options.IncludeInclusionProof {
+		t.Fatalf("expected inclusion proofs to remain disabled")
+	}
+	if !options.IncludeExclusionProof {
+		t.Fatalf("expected exclusion proofs to remain enabled")
 	}
 }

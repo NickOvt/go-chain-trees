@@ -1,0 +1,13 @@
+scenario_family,metric,points_compared,avl_better_points,smt_better_points,tie_points,crossover_scales,median_avl_over_smt_ratio,best_avl_ratio,worst_avl_ratio
+insert_only_build,insert_avg_ns,13,13,0,0,none,0.8513513513513513,0.786637405510851,0.9397136397889977
+insert_only_build,insert_total_ns,13,13,0,0,none,0.8512224696139954,0.7865716612089569,0.9396736656516433
+insert_only_build,insert_mem_alloc_mb,13,13,0,0,none,0.4540914009822692,0.43595665913145526,0.47295742232451093
+insert_only_build,insert_total_alloc_mb,13,13,0,0,none,0.4234531276796824,0.4234148762260626,0.42587209302325585
+proof_only_after_build,inclusion_proof_gen_avg_ns,13,13,0,0,none,0.3876651982378855,0.2985941320293399,0.4771379376315286
+proof_only_after_build,inclusion_proof_verify_avg_ns,13,3,10,0,300K|500K|900K|1M|10M|25M,1.0214180206794683,0.8857408885341846,1.2880311385014596
+proof_only_after_build,inclusion_proof_size_bytes,13,0,13,0,none,2.677456647398844,2.4968354430379747,2.774740810556079
+exclusion_proof_only_after_build,exclusion_proof_gen_avg_ns,13,13,0,0,none,0.3304254940359623,0.19947712418300653,0.4388688071443759
+exclusion_proof_only_after_build,exclusion_proof_verify_avg_ns,13,13,0,0,none,0.5553989592367736,0.4816385310824866,0.6313746486414135
+exclusion_proof_only_after_build,exclusion_proof_size_bytes,13,0,13,0,none,2.918787878787879,2.8195615514333894,2.9696673189823874
+build_then_add_new,insert_avg_ns,13,13,0,0,none,0.8489075630252101,0.7059995572282488,0.8966594242259641
+build_then_reinsert_existing,insert_avg_ns,13,13,0,0,none,0.6730232558139535,0.5793437331898871,0.7642423459501356

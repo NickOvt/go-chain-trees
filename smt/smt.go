@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math/big"
+	"math/bits"
 	"os"
 	"slices"
 	"strings"
@@ -16,7 +16,7 @@ import (
 // Path stores a compressed SMT path segment as LSB-first bits.
 // Bit 0 is the first branching decision from parent to child.
 type Path struct {
-	bits   big.Int
+	bits   []byte // LSB-packed: bit i is bits[i/8]&(1<<(i%8))
 	bitLen int
 }
 
@@ -41,46 +41,50 @@ func (path *Path) KeyBits() ([]byte, int) {
 	return bits, pathBitLen(path)
 }
 
-func newPathFromBigInt(bits *big.Int, bitLen int) *Path {
+func pathByteLen(bitLen int) int {
+	if bitLen <= 0 {
+		return 0
+	}
+
+	return (bitLen + 7) / 8
+}
+
+func maskUnusedPathBits(raw []byte, bitLen int) {
+	if bitLen <= 0 || len(raw) == 0 {
+		return
+	}
+
+	lastByteUsedBits := bitLen & 7
+	if lastByteUsedBits == 0 {
+		return
+	}
+
+	raw[len(raw)-1] &= byte((1 << lastByteUsedBits) - 1)
+}
+
+func newPathFromBits(raw []byte, bitLen int) *Path {
 	if bitLen < 0 {
 		bitLen = 0
 	}
 
-	path := &Path{bitLen: bitLen}
-	if bits != nil {
-		path.bits.Set(bits)
+	byteLen := pathByteLen(bitLen)
+	path := &Path{
+		bits:   make([]byte, byteLen),
+		bitLen: bitLen,
 	}
+	copy(path.bits, raw)
 
-	clampPathBits(&path.bits, bitLen)
+	maskUnusedPathBits(path.bits, bitLen)
 
 	return path
-}
-
-func clampPathBits(bits *big.Int, bitLen int) {
-	if bitLen <= 0 {
-		bits.SetInt64(0)
-		return
-	}
-
-	// Most paths are already normalized; skip mask allocation in that case.
-	if bits.BitLen() <= bitLen {
-		return
-	}
-
-	var one big.Int
-	one.SetInt64(1)
-
-	var mask big.Int
-	mask.Lsh(&one, uint(bitLen))
-	mask.Sub(&mask, &one)
-	bits.And(bits, &mask)
 }
 
 func clonePath(path *Path) *Path {
 	if path == nil {
 		return nil
 	}
-	return newPathFromBigInt(&path.bits, path.bitLen)
+
+	return newPathFromBits(path.bits, path.bitLen)
 }
 
 func pathFromTraversalBytes(data []byte, depth int) *Path {
@@ -92,30 +96,17 @@ func pathFromTraversalBytes(data []byte, depth int) *Path {
 		totalBits = len(data) * 8
 	}
 
-	path := &Path{bitLen: totalBits}
-	for i := 0; i < totalBits; i++ {
-		if utils.GetBit(data, i) {
-			path.bits.SetBit(&path.bits, i, 1)
-		}
+	byteLen := pathByteLen(totalBits)
+	pathBits := make([]byte, byteLen)
+	for i := 0; i < byteLen; i++ {
+		pathBits[i] = bits.Reverse8(data[i])
 	}
+	maskUnusedPathBits(pathBits, totalBits)
 
-	return path
-}
-
-func pathToTraversalBytes(path *Path) ([]byte, int) {
-	if path == nil || path.bitLen <= 0 {
-		return []byte{}, 0
+	return &Path{
+		bits:   pathBits,
+		bitLen: totalBits,
 	}
-
-	result := make([]byte, (path.bitLen+7)/8)
-	for i := 0; i < path.bitLen; i++ {
-		if path.bits.Bit(i) == 1 {
-			result[i/8] |= 1 << (7 - (i % 8))
-		}
-	}
-
-	paddingBits := len(result)*8 - path.bitLen
-	return result, paddingBits
 }
 
 func pathFromKeyBytes(key []byte, bitLen int) *Path {
@@ -123,17 +114,50 @@ func pathFromKeyBytes(key []byte, bitLen int) *Path {
 		bitLen = len(key) * 8
 	}
 
-	path := &Path{bitLen: bitLen}
-	path.bits.SetBytes(key)
-	clampPathBits(&path.bits, bitLen)
-	return path
+	byteLen := pathByteLen(bitLen)
+	pathBits := make([]byte, byteLen)
+
+	maxBytesToCopy := len(key)
+	if maxBytesToCopy > byteLen {
+		maxBytesToCopy = byteLen
+	}
+	for i := 0; i < maxBytesToCopy; i++ {
+		pathBits[i] = key[len(key)-1-i]
+	}
+	maskUnusedPathBits(pathBits, bitLen)
+
+	return &Path{
+		bits:   pathBits,
+		bitLen: bitLen,
+	}
+}
+
+// keyPathBit returns path bit `idx` derived from key bytes without allocating a Path.
+// Path bit ordering matches pathFromKeyBytes + pathBit (LSB-first within each reversed byte).
+func keyPathBit(key []byte, idx int) int {
+	if idx < 0 || idx >= len(key)*8 {
+		return 0
+	}
+
+	byteIdx := len(key) - 1 - (idx >> 3)
+	if byteIdx < 0 || byteIdx >= len(key) {
+		return 0
+	}
+
+	return int((key[byteIdx] >> (idx & 7)) & 1)
 }
 
 func pathBit(path *Path, idx int) int {
 	if path == nil || idx < 0 || idx >= path.bitLen {
 		return 0
 	}
-	return int(path.bits.Bit(idx))
+
+	byteIdx := idx >> 3
+	if byteIdx >= len(path.bits) {
+		return 0
+	}
+
+	return int((path.bits[byteIdx] >> (idx & 7)) & 1)
 }
 
 func pathBitLen(path *Path) int {
@@ -147,7 +171,31 @@ func pathEqual(a, b *Path) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.bitLen == b.bitLen && a.bits.Cmp(&b.bits) == 0
+
+	return a.bitLen == b.bitLen && bytes.Equal(a.bits, b.bits)
+}
+
+func copyPathBitsShifted(dst, src []byte, shiftBits int) {
+	if len(dst) == 0 {
+		return
+	}
+
+	byteShift := shiftBits >> 3
+	bitShift := shiftBits & 7
+
+	if bitShift == 0 {
+		copy(dst, src[byteShift:byteShift+len(dst)])
+		return
+	}
+
+	for i := range dst {
+		srcIdx := byteShift + i
+		b := src[srcIdx] >> bitShift
+		if srcIdx+1 < len(src) {
+			b |= src[srcIdx+1] << (8 - bitShift)
+		}
+		dst[i] = b
+	}
 }
 
 func pathCutPrefix(path *Path, prefixBits int) *Path {
@@ -158,23 +206,29 @@ func pathCutPrefix(path *Path, prefixBits int) *Path {
 		return clonePath(path)
 	}
 	if prefixBits >= path.bitLen {
-		return newPathFromBigInt(nil, 0)
+		return &Path{}
 	}
 
-	result := &Path{bitLen: path.bitLen - prefixBits}
-	result.bits.Rsh(&path.bits, uint(prefixBits))
+	resultBitLen := path.bitLen - prefixBits
+	result := &Path{
+		bits:   make([]byte, pathByteLen(resultBitLen)),
+		bitLen: resultBitLen,
+	}
+	copyPathBitsShifted(result.bits, path.bits, prefixBits)
+	maskUnusedPathBits(result.bits, result.bitLen)
+
 	return result
 }
 
 func pathSlice(path *Path, startBit int, bitLen int) *Path {
 	if path == nil || bitLen <= 0 {
-		return newPathFromBigInt(nil, 0)
+		return &Path{}
 	}
 	if startBit < 0 {
 		startBit = 0
 	}
 	if startBit >= path.bitLen {
-		return newPathFromBigInt(nil, 0)
+		return &Path{}
 	}
 
 	remaining := path.bitLen - startBit
@@ -182,12 +236,16 @@ func pathSlice(path *Path, startBit int, bitLen int) *Path {
 		bitLen = remaining
 	}
 	if bitLen <= 0 {
-		return newPathFromBigInt(nil, 0)
+		return &Path{}
 	}
 
-	result := &Path{bitLen: bitLen}
-	result.bits.Rsh(&path.bits, uint(startBit))
-	clampPathBits(&result.bits, bitLen)
+	result := &Path{
+		bits:   make([]byte, pathByteLen(bitLen)),
+		bitLen: bitLen,
+	}
+	copyPathBitsShifted(result.bits, path.bits, startBit)
+	maskUnusedPathBits(result.bits, result.bitLen)
+
 	return result
 }
 
@@ -211,8 +269,61 @@ func pathCommonPrefixLenAt(a *Path, aOffset int, b *Path, bOffset int) int {
 	}
 
 	prefixLen := 0
+	for prefixLen < maxBits && (((aOffset+prefixLen)&7) != 0 || ((bOffset+prefixLen)&7) != 0) {
+		if pathBit(a, aOffset+prefixLen) != pathBit(b, bOffset+prefixLen) {
+			return prefixLen
+		}
+		prefixLen++
+	}
+
+	for prefixLen+8 <= maxBits {
+		aByteIdx := (aOffset + prefixLen) >> 3
+		bByteIdx := (bOffset + prefixLen) >> 3
+		x := a.bits[aByteIdx] ^ b.bits[bByteIdx]
+		if x == 0 {
+			prefixLen += 8
+			continue
+		}
+
+		prefixLen += bits.TrailingZeros8(x)
+		return prefixLen
+	}
+
 	for prefixLen < maxBits {
-		if a.bits.Bit(aOffset+prefixLen) != b.bits.Bit(bOffset+prefixLen) {
+		if pathBit(a, aOffset+prefixLen) != pathBit(b, bOffset+prefixLen) {
+			break
+		}
+		prefixLen++
+	}
+
+	return prefixLen
+}
+
+func pathCommonPrefixLenAtKey(path *Path, pathOffset int, key []byte, keyOffset int, keyBitLen int) int {
+	if path == nil || len(key) == 0 {
+		return 0
+	}
+	if pathOffset < 0 {
+		pathOffset = 0
+	}
+	if keyOffset < 0 {
+		keyOffset = 0
+	}
+	if keyBitLen <= 0 {
+		keyBitLen = len(key) * 8
+	}
+	if pathOffset >= path.bitLen || keyOffset >= keyBitLen {
+		return 0
+	}
+
+	maxBits := path.bitLen - pathOffset
+	if keyRemaining := keyBitLen - keyOffset; keyRemaining < maxBits {
+		maxBits = keyRemaining
+	}
+
+	prefixLen := 0
+	for prefixLen < maxBits {
+		if pathBit(path, pathOffset+prefixLen) != keyPathBit(key, keyOffset+prefixLen) {
 			break
 		}
 		prefixLen++
@@ -224,7 +335,7 @@ func pathCommonPrefixLenAt(a *Path, aOffset int, b *Path, bOffset int) int {
 func pathCommonPrefix(a, b *Path) (*Path, int) {
 	prefixLen := pathCommonPrefixLenAt(a, 0, b, 0)
 	if prefixLen == 0 {
-		return newPathFromBigInt(nil, 0), 0
+		return &Path{}, 0
 	}
 
 	return pathSlice(a, 0, prefixLen), prefixLen
@@ -235,31 +346,18 @@ func encodePath(path *Path) []byte {
 		return nil
 	}
 
-	byteLen := (path.bitLen + 7) / 8
+	byteLen := pathByteLen(path.bitLen)
 	encoded := make([]byte, binary.MaxVarintLen64+byteLen)
 	n := binary.PutUvarint(encoded, uint64(path.bitLen))
 	encoded = encoded[:n+byteLen]
-
-	for i := 0; i < byteLen; i++ {
-		var b byte
-		for bit := 0; bit < 8; bit++ {
-			idx := i*8 + bit
-			if idx >= path.bitLen {
-				break
-			}
-			if path.bits.Bit(idx) == 1 {
-				b |= 1 << bit
-			}
-		}
-		encoded[n+i] = b
-	}
+	copy(encoded[n:], path.bits)
 
 	return encoded
 }
 
 func decodeEncodedPath(encoded []byte) (*Path, bool) {
 	if len(encoded) == 0 {
-		return newPathFromBigInt(nil, 0), true
+		return &Path{}, true
 	}
 
 	bitLen, n := binary.Uvarint(encoded)
@@ -272,21 +370,29 @@ func decodeEncodedPath(encoded []byte) (*Path, bool) {
 		return nil, false
 	}
 
-	path := &Path{bitLen: int(bitLen)}
-	for i := 0; i < byteLen; i++ {
-		b := encoded[n+i]
-		for bit := 0; bit < 8; bit++ {
-			idx := i*8 + bit
-			if idx >= int(bitLen) {
-				break
-			}
-			if (b & (1 << bit)) != 0 {
-				path.bits.SetBit(&path.bits, idx, 1)
-			}
-		}
+	path := &Path{
+		bits:   make([]byte, byteLen),
+		bitLen: int(bitLen),
 	}
+	copy(path.bits, encoded[n:n+byteLen])
+	maskUnusedPathBits(path.bits, path.bitLen)
 
 	return path, true
+}
+
+func pathToTraversalBytes(path *Path) ([]byte, int) {
+	if path == nil || path.bitLen <= 0 {
+		return []byte{}, 0
+	}
+
+	byteLen := pathByteLen(path.bitLen)
+	result := make([]byte, byteLen)
+	for i := 0; i < byteLen; i++ {
+		result[i] = bits.Reverse8(path.bits[i])
+	}
+
+	paddingBits := len(result)*8 - path.bitLen
+	return result, paddingBits
 }
 
 func pathToRawBits(path *Path) string {
@@ -297,7 +403,7 @@ func pathToRawBits(path *Path) string {
 	var sb strings.Builder
 	sb.Grow(path.bitLen)
 	for i := path.bitLen - 1; i >= 0; i-- {
-		if path.bits.Bit(i) == 1 {
+		if pathBit(path, i) == 1 {
 			sb.WriteByte('1')
 		} else {
 			sb.WriteByte('0')
@@ -307,24 +413,18 @@ func pathToRawBits(path *Path) string {
 	return sb.String()
 }
 
-func nodePathBytes(path *Path) []byte {
-	return encodePath(path)
-}
-
-func (t *SMT) hashNodeCBORArray(dst utils.Hash, values ...[]byte) utils.Hash {
+func (t *SMT) calculateLeafNodeHash(encodedPath []byte, data []byte, dst utils.Hash) utils.Hash {
 	if t.dataHasher == nil {
 		t.dataHasher = utils.NewDataHasher(t.HashAlgo)
 	}
-
-	return t.dataHasher.SumTo(dst, values...)
-}
-
-func (t *SMT) calculateLeafNodeHash(encodedPath []byte, data []byte, dst utils.Hash) utils.Hash {
-	return t.hashNodeCBORArray(dst, encodedPath, data)
+	return t.dataHasher.Sum2To(dst, encodedPath, data)
 }
 
 func (t *SMT) calculateBranchNodeHash(encodedPath []byte, leftHash, rightHash utils.Hash, dst utils.Hash) utils.Hash {
-	return t.hashNodeCBORArray(dst, encodedPath, leftHash, rightHash)
+	if t.dataHasher == nil {
+		t.dataHasher = utils.NewDataHasher(t.HashAlgo)
+	}
+	return t.dataHasher.Sum3To(dst, encodedPath, leftHash, rightHash)
 }
 
 func EncodePath(data []byte, depth int) ([]byte, int) {
@@ -389,12 +489,14 @@ type ProofNode struct {
 
 type InclusionExclusionProof struct {
 	Root utils.Hash
+	Key  utils.Hash
 	Path []*ProofNode
 }
 
 type PublicInclusionExclusionProof struct {
 	Root utils.Hash  `cbor:"1,keyasint" json:"root"`
 	Path [][2][]byte `cbor:"2,keyasint" json:"path"`
+	Key  utils.Hash  `cbor:"3,keyasint" json:"key"`
 }
 
 func (proof *InclusionExclusionProof) ToPublicProof() *PublicInclusionExclusionProof {
@@ -408,16 +510,17 @@ func (proof *InclusionExclusionProof) ToPublicProof() *PublicInclusionExclusionP
 			continue
 		}
 
-		path[i][0] = slices.Clone(proofNode.Path)
+		path[i][0] = proofNode.Path
 		if len(proofNode.Data) > 0 {
-			path[i][1] = slices.Clone(proofNode.Data)
+			path[i][1] = proofNode.Data
 		} else {
-			path[i][1] = slices.Clone(proofNode.Hash)
+			path[i][1] = proofNode.Hash
 		}
 	}
 
 	return &PublicInclusionExclusionProof{
-		Root: slices.Clone(proof.Root),
+		Root: proof.Root,
+		Key:  proof.Key,
 		Path: path,
 	}
 }
@@ -430,28 +533,44 @@ func (proof *PublicInclusionExclusionProof) ToInternalProof() *InclusionExclusio
 	path := make([]*ProofNode, len(proof.Path))
 	for i, tuple := range proof.Path {
 		proofNode := &ProofNode{
-			Path: slices.Clone(tuple[0]),
-			Hash: nil,
-			Data: nil,
+			Path: tuple[0],
 		}
 
 		if i == 0 {
-			proofNode.Data = slices.Clone(tuple[1])
+			proofNode.Data = tuple[1]
 		} else {
-			proofNode.Hash = slices.Clone(tuple[1])
+			proofNode.Hash = tuple[1]
 		}
 
 		path[i] = proofNode
 	}
 
 	return &InclusionExclusionProof{
-		Root: slices.Clone(proof.Root),
+		Root: proof.Root,
+		Key:  proof.Key,
 		Path: path,
 	}
 }
 
 func (t *SMT) VerifyPublicProof(proof *PublicInclusionExclusionProof) (bool, error) {
-	return t.VerifyProof(proof.ToInternalProof())
+	internalProof := proof.ToInternalProof()
+	if internalProof == nil {
+		return false, nil
+	}
+
+	if valid, err := t.VerifyProof(internalProof); err == nil && valid {
+		return true, nil
+	}
+
+	if len(internalProof.Path) > 0 && internalProof.Path[0] != nil && len(internalProof.Path[0].Data) > 0 {
+		internalProof.Path[0].Hash = internalProof.Path[0].Data
+		internalProof.Path[0].Data = nil
+		if valid, err := t.VerifyProof(internalProof); err == nil && valid {
+			return true, nil
+		}
+	}
+
+	return false, fmt.Errorf("public proof is neither a valid inclusion nor exclusion proof")
 }
 
 func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
@@ -462,12 +581,114 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 	if len(proof.Path) == 0 {
 		return false, fmt.Errorf("proof path is empty")
 	}
-	if len(proof.Path) < 2 {
-		return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
-	}
 
 	if !bytes.Equal(proof.Root, t.GetRoot().GetHash()) {
 		return false, fmt.Errorf("given proof document contains invalid root hash")
+	}
+
+	if len(proof.Path[0].Data) > 0 {
+		if len(proof.Path) < 2 {
+			return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
+		}
+
+		recomputedRoot, err := t.recomputeRootFromProofBySpec(proof)
+		if err == nil && bytes.Equal(recomputedRoot, proof.Root) {
+			if err := verifyLeafPathMatchesProofKey(proof, t.HashAlgo); err == nil {
+				return true, nil
+			}
+		}
+	}
+
+	if valid, err := t.verifyExclusionProof(proof); err == nil && valid {
+		return true, nil
+	}
+
+	if len(proof.Path[0].Hash) > 0 {
+		proof.Path[0].Data = proof.Path[0].Hash
+		proof.Path[0].Hash = nil
+		defer func() {
+			proof.Path[0].Hash = proof.Path[0].Data
+			proof.Path[0].Data = nil
+		}()
+
+		if len(proof.Path) < 2 {
+			return false, fmt.Errorf("proof path must contain at least leaf and parent witnesses")
+		}
+
+		recomputedRoot, err := t.recomputeRootFromProofBySpec(proof)
+		if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(recomputedRoot, proof.Root) {
+			return false, fmt.Errorf("calculated root hash does not match provided root hash")
+		}
+		if err := verifyLeafPathMatchesProofKey(proof, t.HashAlgo); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return t.verifyExclusionProof(proof)
+}
+
+func (t *SMT) verifyExclusionProof(proof *InclusionExclusionProof) (bool, error) {
+	if len(proof.Path) == 0 {
+		return false, fmt.Errorf("proof path is empty")
+	}
+
+	fullPath, err := buildFullLeafPathFromProof(proof)
+	if err != nil {
+		return false, err
+	}
+
+	if proof.Path[0] == nil {
+		return false, fmt.Errorf("proof contains nil node at index 0")
+	}
+
+	keyBitLen := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
+	if len(proof.Key) != keyBitLen/8 {
+		return false, fmt.Errorf("proof key length %d does not match expected %d", len(proof.Key), keyBitLen/8)
+	}
+
+	validateDivergence := func() error {
+		witnessPath, ok := decodeEncodedPath(proof.Path[0].Path)
+		if !ok {
+			return fmt.Errorf("proof path[0] is not a valid encoded path")
+		}
+		witnessBitLen := pathBitLen(witnessPath)
+		parentBitLen := pathBitLen(fullPath) - witnessBitLen
+		if witnessBitLen == 0 || parentBitLen < 0 {
+			return fmt.Errorf("exclusion proof witness path is invalid")
+		}
+		if !pathMatchesKey(fullPath, proof.Key, parentBitLen) {
+			return fmt.Errorf("exclusion proof parent path does not match proof key")
+		}
+		commonPrefixLen := pathCommonPrefixLenAtKey(witnessPath, 0, proof.Key, parentBitLen, keyBitLen)
+		if commonPrefixLen == 0 {
+			return fmt.Errorf("exclusion proof witness is not on the proof key branch")
+		}
+		if commonPrefixLen >= witnessBitLen {
+			return fmt.Errorf("exclusion proof witness path does not diverge from proof key")
+		}
+		return nil
+	}
+
+	switch {
+	case len(proof.Path[0].Data) > 0:
+		if pathMatchesKey(fullPath, proof.Key, keyBitLen) {
+			return false, fmt.Errorf("exclusion proof contains target leaf")
+		}
+		if err := validateDivergence(); err != nil {
+			return false, err
+		}
+	case len(proof.Path[0].Hash) == 0:
+		if !pathMatchesKey(fullPath, proof.Key, pathBitLen(fullPath)) {
+			return false, fmt.Errorf("empty exclusion proof path does not match proof key")
+		}
+	default:
+		if err := validateDivergence(); err != nil {
+			return false, err
+		}
 	}
 
 	recomputedRoot, err := t.recomputeRootFromProofBySpec(proof)
@@ -479,11 +700,51 @@ func (t *SMT) VerifyProof(proof *InclusionExclusionProof) (bool, error) {
 		return false, fmt.Errorf("calculated root hash does not match provided root hash")
 	}
 
-	if err := t.verifyLeafPathMatchesLeafKey(proof); err != nil {
-		return false, err
+	return true, nil
+}
+
+func appendPathSegment(dst *Path, segment *Path) {
+	if dst == nil || segment == nil || segment.bitLen <= 0 {
+		return
 	}
 
-	return true, nil
+	oldBitLen := dst.bitLen
+	newBitLen := oldBitLen + segment.bitLen
+	oldByteLen := pathByteLen(oldBitLen)
+	newByteLen := pathByteLen(newBitLen)
+
+	if cap(dst.bits) < newByteLen {
+		grown := make([]byte, newByteLen)
+		copy(grown, dst.bits[:oldByteLen])
+		dst.bits = grown
+	} else {
+		dst.bits = dst.bits[:newByteLen]
+		if newByteLen > oldByteLen {
+			clear(dst.bits[oldByteLen:newByteLen])
+		}
+	}
+
+	shift := oldBitLen & 7
+	dstByteOffset := oldBitLen >> 3
+	srcByteLen := pathByteLen(segment.bitLen)
+
+	if shift == 0 {
+		copy(dst.bits[dstByteOffset:], segment.bits[:srcByteLen])
+		dst.bitLen = newBitLen
+		return
+	}
+
+	for i := 0; i < srcByteLen; i++ {
+		b := segment.bits[i]
+		dstIdx := dstByteOffset + i
+		dst.bits[dstIdx] |= b << shift
+		if dstIdx+1 < len(dst.bits) {
+			dst.bits[dstIdx+1] |= b >> (8 - shift)
+		}
+	}
+
+	dst.bitLen = newBitLen
+	maskUnusedPathBits(dst.bits, dst.bitLen)
 }
 
 func buildFullLeafPathFromProof(proof *InclusionExclusionProof) (*Path, error) {
@@ -492,8 +753,6 @@ func buildFullLeafPathFromProof(proof *InclusionExclusionProof) (*Path, error) {
 	}
 
 	path := &Path{}
-	var shifted big.Int
-	totalBits := 0
 
 	for i := len(proof.Path) - 1; i >= 0; i-- {
 		if proof.Path[i] == nil {
@@ -509,98 +768,69 @@ func buildFullLeafPathFromProof(proof *InclusionExclusionProof) (*Path, error) {
 			continue
 		}
 
-		shifted.Lsh(&segment.bits, uint(totalBits))
-		path.bits.Or(&path.bits, &shifted)
-		totalBits += pathBitLen(segment)
+		appendPathSegment(path, segment)
 	}
 
-	path.bitLen = totalBits
 	return path, nil
 }
 
-func (t *SMT) findLeafByFullPath(fullPath *Path) (*Node, error) {
-	if fullPath == nil {
-		return nil, fmt.Errorf("full path is nil")
-	}
-
-	current := t.GetRoot()
-	pathOffset := 0
-	depth := 0
-
-	for current != nil && !current.IsLeaf {
-		if pathOffset >= pathBitLen(fullPath) {
-			return nil, fmt.Errorf("path exhausted before reaching leaf")
-		}
-
-		goLeft := pathBit(fullPath, pathOffset) == 0
-
-		var child *Node
-		if goLeft {
-			child = current.LeftNode
-		} else {
-			child = current.RightNode
-		}
-		if child == nil {
-			return nil, fmt.Errorf("missing child for path at depth %d", depth)
-		}
-
-		commonPrefixLen := pathCommonPrefixLenAt(child.Path, 0, fullPath, pathOffset)
-		if commonPrefixLen != pathBitLen(child.Path) {
-			return nil, fmt.Errorf("path mismatch at depth %d", depth)
-		}
-
-		pathOffset += commonPrefixLen
-		depth += commonPrefixLen
-		current = child
-	}
-
-	if current == nil || !current.IsLeaf {
-		return nil, fmt.Errorf("leaf not found for calculated path")
-	}
-
-	if pathOffset != pathBitLen(fullPath) {
-		return nil, fmt.Errorf("calculated path has extra bits past located leaf")
-	}
-
-	return current, nil
-}
-
-func (t *SMT) verifyLeafPathMatchesLeafKey(proof *InclusionExclusionProof) error {
+func verifyLeafPathMatchesProofKey(proof *InclusionExclusionProof, hashAlgo utils.HashAlgo) error {
 	fullPath, err := buildFullLeafPathFromProof(proof)
 	if err != nil {
 		return err
 	}
 
-	keyBitLen := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
+	keyBitLen := utils.GetHashAlgoOutputBitCount(hashAlgo)
 	if pathBitLen(fullPath) != keyBitLen {
 		return fmt.Errorf("calculated leaf path bit length %d does not match key bit length %d", pathBitLen(fullPath), keyBitLen)
 	}
-
-	leaf, findLeafErr := t.findLeafByFullPath(fullPath)
-	if findLeafErr != nil {
-		return findLeafErr
-	}
-	if len(leaf.Key) == 0 {
-		return fmt.Errorf("located leaf has empty key")
+	if len(proof.Key) != keyBitLen/8 {
+		return fmt.Errorf("proof key length %d does not match expected %d", len(proof.Key), keyBitLen/8)
 	}
 
-	leafKeyPath := pathFromKeyBytes(leaf.Key, len(leaf.Key)*8)
-	if !pathEqual(leafKeyPath, fullPath) {
-		return fmt.Errorf("calculated leaf path does not match leaf key")
+	for bitIdx := 0; bitIdx < keyBitLen; bitIdx++ {
+		if pathBit(fullPath, bitIdx) != keyPathBit(proof.Key, bitIdx) {
+			return fmt.Errorf("calculated leaf path does not match proof key")
+		}
 	}
 
 	return nil
+}
+
+func pathMatchesKey(path *Path, key []byte, bitLen int) bool {
+	if path == nil {
+		return bitLen == 0
+	}
+	if bitLen < 0 || bitLen > pathBitLen(path) {
+		return false
+	}
+	if bitLen > len(key)*8 {
+		return false
+	}
+
+	for bitIdx := 0; bitIdx < bitLen; bitIdx++ {
+		if pathBit(path, bitIdx) != keyPathBit(key, bitIdx) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (t *SMT) recomputeRootFromProofBySpec(proof *InclusionExclusionProof) (utils.Hash, error) {
 	if proof == nil || len(proof.Path) == 0 {
 		return nil, fmt.Errorf("cannot recompute root from empty proof")
 	}
-	if len(proof.Path[0].Data) == 0 {
-		return nil, fmt.Errorf("first proof node must contain leaf data for inclusion verification")
+	if proof.Path[0] == nil {
+		return nil, fmt.Errorf("proof contains nil node at index 0")
 	}
 
-	currentHash := t.calculateLeafNodeHash(proof.Path[0].Path, proof.Path[0].Data, nil)
+	var currentHash utils.Hash
+	if len(proof.Path[0].Data) > 0 {
+		currentHash = t.calculateLeafNodeHash(proof.Path[0].Path, proof.Path[0].Data, nil)
+	} else {
+		currentHash = proof.Path[0].Hash
+	}
 
 	for i := 1; i < len(proof.Path); i++ {
 		if proof.Path[i] == nil {
@@ -656,24 +886,13 @@ func (node *Node) GetHash() utils.Hash {
 	return node.Hash
 }
 
-func (node *Node) encodedPathBytes() []byte {
-	if node == nil {
-		return nil
-	}
-	if node.encodedPath == nil && node.Path != nil {
-		node.encodedPath = encodePath(node.Path)
-	}
-
-	return node.encodedPath
-}
-
 func (node *Node) setPath(path *Path) {
 	if node == nil {
 		return
 	}
 
 	node.Path = path
-	node.encodedPath = nodePathBytes(path)
+	node.encodedPath = encodePath(path)
 }
 
 func (node *Node) hashDst() utils.Hash {
@@ -683,12 +902,20 @@ func (node *Node) hashDst() utils.Hash {
 	return node.Hash[:0]
 }
 
+func (node *Node) encodedPathForProof() []byte {
+	if node == nil {
+		return nil
+	}
+
+	return node.encodedPath
+}
+
 func (node *Node) CalculateLeafHash(tree *SMT) {
 	if node == nil {
 		return
 	}
 
-	node.Hash = tree.calculateLeafNodeHash(node.encodedPathBytes(), node.Data, node.hashDst())
+	node.Hash = tree.calculateLeafNodeHash(node.encodedPath, node.Data, node.hashDst())
 }
 
 func (node *Node) CalculateBranchHash(tree *SMT) {
@@ -696,7 +923,7 @@ func (node *Node) CalculateBranchHash(tree *SMT) {
 		return
 	}
 
-	node.Hash = tree.calculateBranchNodeHash(node.encodedPathBytes(), node.GetLeftNode().GetHash(), node.GetRightNode().GetHash(), node.hashDst())
+	node.Hash = tree.calculateBranchNodeHash(node.encodedPath, node.GetLeftNode().GetHash(), node.GetRightNode().GetHash(), node.hashDst())
 }
 
 func NewSMT(hashAlgo utils.HashAlgo, appendOnly bool) *SMT {
@@ -724,14 +951,14 @@ func newBranchNode(path *Path) *Node {
 func (t *SMT) Init() {
 	// set initial values
 	rootNode := newBranchNode(nil)
-	rootNode.Hash = t.calculateBranchNodeHash(rootNode.encodedPathBytes(), nil, nil, rootNode.hashDst())
+	rootNode.Hash = t.calculateBranchNodeHash(nil, nil, nil, rootNode.hashDst())
 	t.Root = rootNode
 }
 
 func (t *SMT) GetRoot() *Node {
 	if t.Root == nil {
 		rootNode := newBranchNode(nil)
-		rootNode.Hash = t.calculateBranchNodeHash(rootNode.encodedPathBytes(), nil, nil, rootNode.hashDst())
+		rootNode.Hash = t.calculateBranchNodeHash(nil, nil, nil, rootNode.hashDst())
 		t.Root = rootNode
 	}
 
@@ -741,6 +968,21 @@ func (t *SMT) GetRoot() *Node {
 func (t *SMT) Insert(key []byte, data []byte) (bool, error) {
 	_, err := t.insert(key, data, t.GetRoot(), nil, t.AppendOnly)
 
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// InsertHashed inserts data using an already-hashed key without hashing it again.
+func (t *SMT) InsertHashed(keyHash utils.Hash, data []byte) (bool, error) {
+	chosenPath := chooseNewPath(keyHash, nil)
+	if pathBitLen(chosenPath) <= 0 {
+		return false, fmt.Errorf("cannot insert with empty path")
+	}
+
+	_, err := t.insertPrepared(t.GetRoot(), chosenPath, 0, keyHash, data, t.AppendOnly)
 	if err != nil {
 		return false, err
 	}
@@ -876,20 +1118,19 @@ func chooseNewPath(originalKeyHash utils.Hash, newPath *Path) *Path {
 	if newPath == nil {
 		return pathFromKeyBytes(originalKeyHash, len(originalKeyHash)*8)
 	}
-	return clonePath(newPath)
+	return newPath
 }
 
 func newLeafNode(tree *SMT, keyHash utils.Hash, data []byte, path *Path) *Node {
-	leafPath := clonePath(path)
 	node := &Node{
 		Data:      data,
 		LeftNode:  nil,
 		RightNode: nil,
 		IsLeaf:    true,
-		Key:       slices.Clone(keyHash),
+		Key:       keyHash,
 	}
-	node.setPath(leafPath)
-	node.Hash = tree.calculateLeafNodeHash(node.encodedPathBytes(), data, node.hashDst())
+	node.setPath(path)
+	node.CalculateLeafHash(tree)
 	return node
 }
 
@@ -1084,27 +1325,26 @@ func (t *SMT) insertPrepared(currentRoot *Node, chosenPath *Path, pathOffset int
 
 func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionProof, error) {
 	rootNode := t.GetRoot()
-	proof := &InclusionExclusionProof{
-		Path: []*ProofNode{},
-		Root: rootNode.GetHash(),
-	}
-
 	if rootNode.LeftNode == nil && rootNode.RightNode == nil {
 		return nil, fmt.Errorf("Cannot generate inclusion proof for an empty tree")
 	}
 
 	keyBitSize := utils.GetHashAlgoOutputBitCount(t.HashAlgo)
-	fullKeyPath := pathFromKeyBytes(key, keyBitSize)
+	proof := &InclusionExclusionProof{
+		Root: rootNode.GetHash(),
+		Key:  key,
+		Path: make([]*ProofNode, 0, keyBitSize+1),
+	}
 
 	i := 0
 	currNode := rootNode
 	pathMismatch := false
 
 	for i < keyBitSize && currNode != nil && !currNode.IsLeaf {
-		goLeft := pathBit(fullKeyPath, i) == 0
+		goLeft := keyPathBit(key, i) == 0
 
 		proofNode := &ProofNode{
-			Path: currNode.encodedPathBytes(),
+			Path: currNode.encodedPathForProof(),
 			Data: nil,
 		}
 
@@ -1124,11 +1364,16 @@ func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionPr
 		proof.Path = append(proof.Path, proofNode)
 
 		if nextNode == nil {
+			proof.Path = append(proof.Path, &ProofNode{
+				Path: pathSlice(pathFromKeyBytes(key, keyBitSize), i, 1).Encode(),
+				Hash: nil,
+				Data: nil,
+			})
 			currNode = nil
 			break
 		}
 
-		commonPrefixLen := pathCommonPrefixLenAt(nextNode.Path, 0, fullKeyPath, i)
+		commonPrefixLen := pathCommonPrefixLenAtKey(nextNode.Path, 0, key, i, keyBitSize)
 		i += commonPrefixLen
 		currNode = nextNode
 
@@ -1141,13 +1386,13 @@ func (t *SMT) GenerateInclusionExclusionProof(key []byte) (*InclusionExclusionPr
 	if currNode != nil {
 		if currNode.IsLeaf {
 			proof.Path = append(proof.Path, &ProofNode{
-				Path: currNode.encodedPathBytes(),
+				Path: currNode.encodedPathForProof(),
 				Hash: nil,
 				Data: currNode.Data,
 			})
 		} else if pathMismatch || i >= keyBitSize {
 			proof.Path = append(proof.Path, &ProofNode{
-				Path: currNode.encodedPathBytes(),
+				Path: currNode.encodedPathForProof(),
 				Hash: currNode.Hash,
 				Data: nil,
 			})

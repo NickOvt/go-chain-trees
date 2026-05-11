@@ -1,14 +1,17 @@
 package test_interfaces
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
-	"math/big"
+	"math/bits"
 	randMath "math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +29,7 @@ const (
 	defaultBlockSizeBytes               = 32
 	defaultDataSizeBytes                = 8
 	runtimeResetDelay     time.Duration = 100 * time.Millisecond
-	timeBucketCount                      = 10
+	timeBucketCount                     = 10
 )
 
 type BenchmarkResult struct {
@@ -38,7 +41,6 @@ type BenchmarkResult struct {
 	//// Inclusion Proofs
 	InclusionProofTotalTime  time.Duration
 	InclusionProofGenTime    time.Duration
-	InclusionProofGenBuckets []TimeBucket
 	InclusionProofSize       int
 	InclusionProofVerifyTime time.Duration
 	////
@@ -46,28 +48,33 @@ type BenchmarkResult struct {
 	//// Exclusion Proofs
 	ExclusionProofTotalTime  time.Duration
 	ExclusionProofGenTime    time.Duration
-	ExclusionProofGenBuckets []TimeBucket
 	ExclusionProofSize       int
 	ExclusionProofVerifyTime time.Duration
 	////
 
 	//// Inserts
-	InsertElementCount int
-	InsertionTime      time.Duration
-	AvgPerBlock        time.Duration
-	InsertTimeBuckets  []TimeBucket
-	MemoryAllocatedMB  float64
-	TotalAllocatedMB   float64
-	HeapObjects        uint64
+	InsertElementCount      int
+	InsertionTime           time.Duration
+	AvgPerBlock             time.Duration
+	InsertTimeBuckets       []TimeBucket
+	MemoryAllocatedMB       float64
+	TotalAllocatedMB        float64
+	HeapObjects             uint64
+	CreatedHeapObjects      uint64
+	FreedHeapObjects        uint64
+	NetLiveHeapObjectChange int64
 	////
 
 	//// Deletes
-	DeleteElementCount       int
-	DeletionTime             time.Duration
-	AvgDeletionPerBlock      time.Duration
-	DeletesMemoryAllocatedMB float64
-	DeletesTotalAllocatedMB  float64
-	DeletesHeapObjects       uint64
+	DeleteElementCount             int
+	DeletionTime                   time.Duration
+	AvgDeletionPerBlock            time.Duration
+	DeletesMemoryAllocatedMB       float64
+	DeletesTotalAllocatedMB        float64
+	DeletesHeapObjects             uint64
+	DeletesCreatedHeapObjects      uint64
+	DeletesFreedHeapObjects        uint64
+	DeletesNetLiveHeapObjectChange int64
 	////
 }
 
@@ -89,6 +96,7 @@ type BenchmarkOptions struct {
 	HashAlgo                 utils.HashAlgo
 	DeleteSequential         bool
 	DisableSMTAppendOnly     bool
+	UseOrderedPrehashedKeys  bool
 	CPUProfile               bool
 }
 
@@ -108,7 +116,6 @@ type TimeBucket struct {
 type InclusionExclusionProofResult struct {
 	totalProofTime time.Duration
 	avgProofTime   time.Duration
-	timeBuckets    []TimeBucket
 	avgProofSize   int
 	avgVerifyTime  time.Duration
 }
@@ -116,11 +123,14 @@ type InclusionExclusionProofResult struct {
 // var allResults []BenchmarkResult
 
 type InsertDeleteMetrics struct {
-	Elapsed      time.Duration
-	AllocatedMB  float64
-	TotalAllocMB float64
-	HeapObjects  uint64
-	TimeBuckets  []TimeBucket
+	Elapsed                 time.Duration
+	AllocatedMB             float64
+	TotalAllocMB            float64
+	HeapObjects             uint64
+	CreatedHeapObjects      uint64
+	FreedHeapObjects        uint64
+	NetLiveHeapObjectChange int64
+	TimeBuckets             []TimeBucket
 }
 
 type benchmarkProfiler struct {
@@ -130,6 +140,17 @@ type benchmarkProfiler struct {
 	cpuFile  *os.File
 	started  bool
 	enabled  bool
+}
+
+type orderedPrehashedSeedRecord struct {
+	seed uint64
+	hash utils.Hash
+}
+
+type orderedPrehashedKeyProvider struct {
+	seeds        []uint64
+	nextFreshIdx int
+	nextReuseIdx int
 }
 
 type keySampleCollector struct {
@@ -162,6 +183,19 @@ func NewProofOnlyBenchmarkOptions(treeType string, buildCount int, sampleSize fl
 	options.ScenarioName = fmt.Sprintf("proof_only_after_%s_build", formatCountLabel(buildCount))
 	options.PrebuildElementCount = buildCount
 	options.IncludeInclusionProof = true
+
+	if sampleSize > 0 {
+		options.SampleSize = sampleSize
+	}
+
+	return options
+}
+
+func NewExclusionProofOnlyBenchmarkOptions(treeType string, buildCount int, sampleSize float32) *BenchmarkOptions {
+	options := newDefaultBenchmarkOptions(treeType)
+	options.ScenarioName = fmt.Sprintf("exclusion_proof_only_after_%s_build", formatCountLabel(buildCount))
+	options.PrebuildElementCount = buildCount
+	options.IncludeExclusionProof = true
 
 	if sampleSize > 0 {
 		options.SampleSize = sampleSize
@@ -232,6 +266,8 @@ func normalizeBenchmarkOptions(options *BenchmarkOptions) {
 			options.ScenarioName = fmt.Sprintf("build_%s_then_reinsert_%s_existing", formatCountLabel(options.PrebuildElementCount), formatCountLabel(options.ElementCount))
 		case options.PrebuildElementCount > 0 && options.MeasureInserts:
 			options.ScenarioName = fmt.Sprintf("build_%s_then_add_%s_new", formatCountLabel(options.PrebuildElementCount), formatCountLabel(options.ElementCount))
+		case options.PrebuildElementCount > 0 && options.IncludeExclusionProof && !options.IncludeInclusionProof:
+			options.ScenarioName = fmt.Sprintf("exclusion_proof_only_after_%s_build", formatCountLabel(options.PrebuildElementCount))
 		case options.PrebuildElementCount > 0 && (options.IncludeInclusionProof || options.IncludeExclusionProof):
 			options.ScenarioName = fmt.Sprintf("proof_only_after_%s_build", formatCountLabel(options.PrebuildElementCount))
 		default:
@@ -245,7 +281,7 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 	fmt.Println("BENCHMARK SUITE RESULTS")
 	fmt.Println("========================================")
 
-	fmt.Printf("%-14s %-34s %-16s %-16s %-18s %-20s %-20s %-25s %-25s %-22s %-24s %-22s %-23s %-25s %-24s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
+	fmt.Printf("%-14s %-34s %-16s %-16s %-18s %-20s %-20s %-25s %-25s %-22s %-26s %-26s %-27s %-24s %-22s %-23s %-25s %-24s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s %-26s %-26s %-27s\n",
 		"Tree",
 		"Scenario",
 		"Prebuild",
@@ -256,6 +292,9 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 		"Mem Alloc MB [Inserts]",
 		"Total Alloc MB [Inserts]",
 		"Heap Objs [Inserts]",
+		"Created Heap Objs [Inserts]",
+		"Freed Heap Objs [Inserts]",
+		"Net Heap Change [Inserts]",
 		"[Inclusion] Proof Total",
 		"[Inclusion] Avg Proof",
 		"[Inclusion] Proof Size",
@@ -269,9 +308,12 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 		"Avg/Block [Deletes]",
 		"Mem Alloc MB [Deletes]",
 		"Total Alloc MB [Deletes]",
-		"Heap Objs [Deletes]")
+		"Heap Objs [Deletes]",
+		"Created Heap Objs [Deletes]",
+		"Freed Heap Objs [Deletes]",
+		"Net Heap Change [Deletes]")
 
-	fmt.Printf("%-14s %-34s %-16s %-16s %-18s %-20s %-20s %-25s %-25s %-22s %-24s %-22s %-23s %-25s %-24s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s\n",
+	fmt.Printf("%-14s %-34s %-16s %-16s %-18s %-20s %-20s %-25s %-25s %-22s %-26s %-26s %-27s %-24s %-22s %-23s %-25s %-24s %-22s %-23s %-25s %-22s %-20s %-20s %-25s %-25s %-22s %-26s %-26s %-27s\n",
 		strings.Repeat("-", 14),
 		strings.Repeat("-", 34),
 		strings.Repeat("-", 16),
@@ -282,6 +324,9 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 		strings.Repeat("-", 25),
 		strings.Repeat("-", 25),
 		strings.Repeat("-", 22),
+		strings.Repeat("-", 26),
+		strings.Repeat("-", 26),
+		strings.Repeat("-", 27),
 		strings.Repeat("-", 24),
 		strings.Repeat("-", 22),
 		strings.Repeat("-", 23),
@@ -295,9 +340,12 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 		strings.Repeat("-", 20),
 		strings.Repeat("-", 25),
 		strings.Repeat("-", 25),
-		strings.Repeat("-", 22))
+		strings.Repeat("-", 22),
+		strings.Repeat("-", 26),
+		strings.Repeat("-", 26),
+		strings.Repeat("-", 27))
 	for _, r := range allResults {
-		fmt.Printf("%-14s %-34s %-16d %-16d %-18d %-20v %-20v %-25.2f %-25.2f %-22d %-24v %-22v %-23d %-25v %-24v %-22v %-23d %-25v %-22d %-20v %-20v %-25.2f %-25.2f %-22d\n",
+		fmt.Printf("%-14s %-34s %-16d %-16d %-18d %-20v %-20v %-25.2f %-25.2f %-22d %-26d %-26d %-27d %-24v %-22v %-23d %-25v %-24v %-22v %-23d %-25v %-22d %-20v %-20v %-25.2f %-25.2f %-22d %-26d %-26d %-27d\n",
 			r.TreeType,
 			r.Scenario,
 			r.PrebuildElementCount,
@@ -308,6 +356,9 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 			r.MemoryAllocatedMB,
 			r.TotalAllocatedMB,
 			r.HeapObjects,
+			r.CreatedHeapObjects,
+			r.FreedHeapObjects,
+			r.NetLiveHeapObjectChange,
 			r.InclusionProofTotalTime,
 			r.InclusionProofGenTime,
 			r.InclusionProofSize,
@@ -322,14 +373,11 @@ func PrintCombinedResults(allResults []BenchmarkResult) {
 			r.DeletesMemoryAllocatedMB,
 			r.DeletesTotalAllocatedMB,
 			r.DeletesHeapObjects,
+			r.DeletesCreatedHeapObjects,
+			r.DeletesFreedHeapObjects,
+			r.DeletesNetLiveHeapObjectChange,
 		)
 
-		if len(r.InclusionProofGenBuckets) > 0 {
-			fmt.Printf("  inclusion-proof-buckets: %s\n", formatTimeBuckets(r.InclusionProofGenBuckets))
-		}
-		if len(r.ExclusionProofGenBuckets) > 0 {
-			fmt.Printf("  exclusion-proof-buckets: %s\n", formatTimeBuckets(r.ExclusionProofGenBuckets))
-		}
 		if len(r.InsertTimeBuckets) > 0 {
 			fmt.Printf("  insert-buckets: %s\n", formatTimeBuckets(r.InsertTimeBuckets))
 		}
@@ -354,11 +402,11 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 	defer file.Close()
 
 	// Header
-	file.WriteString("TreeType,Scenario,PrebuildElements,FinalElements,InsertElements,InsertTime(ns),AvgPerBlock(ns),InsertTimeBuckets,MemAllocMB,TotalAllocMB,HeapObjects,InclusionProofTotal(ns),InclusionProofGen(ns),InclusionProofGenBuckets,InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofTotal(ns),ExclusionProofGen(ns),ExclusionProofGenBuckets,ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects\n")
+	file.WriteString("TreeType,Scenario,PrebuildElements,FinalElements,InsertElements,InsertTime(ns),AvgPerBlock(ns),InsertTimeBuckets,MemAllocMB,TotalAllocMB,HeapObjects,CreatedHeapObjects,FreedHeapObjects,NetLiveHeapObjectChange,InclusionProofTotal(ns),InclusionProofGen(ns),InclusionProofSize(bytes),InclusionProofVerify(ns),ExclusionProofTotal(ns),ExclusionProofGen(ns),ExclusionProofSize(bytes),ExclusionProofVerify(ns),DeleteElements,DeleteTime(ns),AvgDeletePerBlock(ns),DeleteMemAllocMB,DeleteTotalAllocMB,DeleteHeapObjects,DeletesCreatedHeapObjects,DeletesFreedHeapObjects,DeletesNetLiveHeapObjectChange\n")
 
 	// Data rows
 	for _, r := range allResults {
-		line := fmt.Sprintf("%s,%s,%d,%d,%d,%d,%d,%q,%.2f,%.2f,%d,%d,%d,%q,%d,%d,%d,%d,%q,%d,%d,%d,%d,%d,%.2f,%.2f,%d\n",
+		line := fmt.Sprintf("%s,%s,%d,%d,%d,%d,%d,%q,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%d,%d,%d,%d\n",
 			r.TreeType,
 			r.Scenario,
 			r.PrebuildElementCount,
@@ -370,14 +418,15 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 			r.MemoryAllocatedMB,
 			r.TotalAllocatedMB,
 			r.HeapObjects,
+			r.CreatedHeapObjects,
+			r.FreedHeapObjects,
+			r.NetLiveHeapObjectChange,
 			r.InclusionProofTotalTime.Nanoseconds(),
 			r.InclusionProofGenTime.Nanoseconds(),
-			formatTimeBuckets(r.InclusionProofGenBuckets),
 			r.InclusionProofSize,
 			r.InclusionProofVerifyTime.Nanoseconds(),
 			r.ExclusionProofTotalTime.Nanoseconds(),
 			r.ExclusionProofGenTime.Nanoseconds(),
-			formatTimeBuckets(r.ExclusionProofGenBuckets),
 			r.ExclusionProofSize,
 			r.ExclusionProofVerifyTime.Nanoseconds(),
 			r.DeleteElementCount,
@@ -385,7 +434,10 @@ func SaveResultsToCSV(now time.Time, allResults []BenchmarkResult) {
 			r.AvgDeletionPerBlock.Nanoseconds(),
 			r.DeletesMemoryAllocatedMB,
 			r.DeletesTotalAllocatedMB,
-			r.DeletesHeapObjects)
+			r.DeletesHeapObjects,
+			r.DeletesCreatedHeapObjects,
+			r.DeletesFreedHeapObjects,
+			r.DeletesNetLiveHeapObjectChange)
 		file.WriteString(line)
 	}
 
@@ -453,7 +505,18 @@ func formatTimeBuckets(buckets []TimeBucket) string {
 	return strings.Join(parts, "|")
 }
 
-func calculateProofBenchmark(proofResults []ProofResult) (time.Duration, time.Duration, []TimeBucket, int, time.Duration) {
+func calculateHeapObjectCounters(before runtime.MemStats, after runtime.MemStats) (uint64, uint64, int64) {
+	created := after.Mallocs - before.Mallocs
+	freed := after.Frees - before.Frees
+
+	if created >= freed {
+		return created, freed, int64(created - freed)
+	}
+
+	return created, freed, -int64(freed - created)
+}
+
+func calculateProofBenchmark(proofResults []ProofResult) (time.Duration, time.Duration, int, time.Duration) {
 	var totalProofTime time.Duration
 	var totalProofSize int
 	var totalVerifyTime time.Duration
@@ -465,19 +528,14 @@ func calculateProofBenchmark(proofResults []ProofResult) (time.Duration, time.Du
 	}
 
 	if len(proofResults) == 0 {
-		return 0, 0, newTimeBuckets(), 0, 0
+		return 0, 0, 0, 0
 	}
 
 	avgProofTime := totalProofTime / time.Duration(len(proofResults))
 	avgProofSize := totalProofSize / len(proofResults)
 	avgVerifyTime := totalVerifyTime / time.Duration(len(proofResults))
-	proofDurations := make([]time.Duration, len(proofResults))
-	for idx, pr := range proofResults {
-		proofDurations[idx] = pr.proofTime
-	}
-	timeBuckets := calculateTimeBucketsFromDurations(proofDurations)
 
-	return totalProofTime, avgProofTime, timeBuckets, avgProofSize, avgVerifyTime
+	return totalProofTime, avgProofTime, avgProofSize, avgVerifyTime
 }
 
 func newBenchmarkProfiler(t *testing.T, options *BenchmarkOptions, now time.Time) *benchmarkProfiler {
@@ -640,6 +698,110 @@ func buildSelectionIndices(totalCount int, selectionCount int, sequential bool) 
 	return indices
 }
 
+func compareHashesBySMTPathOrder(a utils.Hash, b utils.Hash) int {
+	for offset := 0; offset < len(a) && offset < len(b); offset++ {
+		aByte := bits.Reverse8(a[len(a)-1-offset])
+		bByte := bits.Reverse8(b[len(b)-1-offset])
+
+		if aByte < bByte {
+			return -1
+		}
+		if aByte > bByte {
+			return 1
+		}
+	}
+
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func sortPrehashedKeysForTree(treeType string, keys []utils.Hash) error {
+	switch strings.ToLower(treeType) {
+	case AVLHASHTREE:
+		sort.Slice(keys, func(i int, j int) bool {
+			return bytes.Compare(keys[i], keys[j]) < 0
+		})
+	case SMT:
+		sort.Slice(keys, func(i int, j int) bool {
+			return compareHashesBySMTPathOrder(keys[i], keys[j]) < 0
+		})
+	default:
+		return fmt.Errorf("cannot sort prehashed keys for unknown tree type %q", treeType)
+	}
+
+	return nil
+}
+
+func buildOrderedPrehashedSeeds(treeType string, count int) ([]uint64, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+
+	records := make([]orderedPrehashedSeedRecord, count)
+	for idx := 0; idx < count; idx++ {
+		seed := uint64(idx + 1)
+		records[idx] = orderedPrehashedSeedRecord{
+			seed: seed,
+			hash: hashCounterSeed(seed),
+		}
+	}
+
+	switch strings.ToLower(treeType) {
+	case AVLHASHTREE:
+		sort.Slice(records, func(i int, j int) bool {
+			return bytes.Compare(records[i].hash, records[j].hash) < 0
+		})
+	case SMT:
+		sort.Slice(records, func(i int, j int) bool {
+			return compareHashesBySMTPathOrder(records[i].hash, records[j].hash) < 0
+		})
+	default:
+		return nil, fmt.Errorf("cannot sort prehashed keys for unknown tree type %q", treeType)
+	}
+
+	seeds := make([]uint64, len(records))
+	for idx, record := range records {
+		seeds[idx] = record.seed
+	}
+
+	return seeds, nil
+}
+
+func newOrderedPrehashedKeyProvider(treeType string, count int) (*orderedPrehashedKeyProvider, error) {
+	seeds, err := buildOrderedPrehashedSeeds(treeType, count)
+	if err != nil {
+		return nil, err
+	}
+
+	return &orderedPrehashedKeyProvider{seeds: seeds}, nil
+}
+
+func (provider *orderedPrehashedKeyProvider) nextFreshKey() utils.Hash {
+	if provider == nil || provider.nextFreshIdx >= len(provider.seeds) {
+		return nil
+	}
+
+	key := hashCounterSeed(provider.seeds[provider.nextFreshIdx])
+	provider.nextFreshIdx++
+	return key
+}
+
+func (provider *orderedPrehashedKeyProvider) nextExistingKey() utils.Hash {
+	if provider == nil || provider.nextReuseIdx >= len(provider.seeds) {
+		return nil
+	}
+
+	key := hashCounterSeed(provider.seeds[provider.nextReuseIdx])
+	provider.nextReuseIdx++
+	return key
+}
+
 func newDataGenerator(dataSize int, counterStart int64) func() []byte {
 	dataHashFn := GetCounterKeyFuncFrom(counterStart)
 
@@ -707,13 +869,17 @@ func runFreshInsertBatch(
 
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
+	createdHeapObjects, freedHeapObjects, netLiveHeapObjectChange := calculateHeapObjectCounters(before, after)
 
 	return InsertDeleteMetrics{
-		Elapsed:      elapsed,
-		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
-		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
-		HeapObjects:  after.HeapObjects,
-		TimeBuckets:  timeBuckets,
+		Elapsed:                 elapsed,
+		AllocatedMB:             float64(after.Alloc-before.Alloc) / 1024 / 1024,
+		TotalAllocMB:            float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
+		HeapObjects:             after.HeapObjects,
+		CreatedHeapObjects:      createdHeapObjects,
+		FreedHeapObjects:        freedHeapObjects,
+		NetLiveHeapObjectChange: netLiveHeapObjectChange,
+		TimeBuckets:             timeBuckets,
 	}, nil
 }
 
@@ -754,13 +920,17 @@ func measureExistingInsertBatch(
 
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
+	createdHeapObjects, freedHeapObjects, netLiveHeapObjectChange := calculateHeapObjectCounters(before, after)
 
 	return InsertDeleteMetrics{
-		Elapsed:      elapsed,
-		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
-		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
-		HeapObjects:  after.HeapObjects,
-		TimeBuckets:  timeBuckets,
+		Elapsed:                 elapsed,
+		AllocatedMB:             float64(after.Alloc-before.Alloc) / 1024 / 1024,
+		TotalAllocMB:            float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
+		HeapObjects:             after.HeapObjects,
+		CreatedHeapObjects:      createdHeapObjects,
+		FreedHeapObjects:        freedHeapObjects,
+		NetLiveHeapObjectChange: netLiveHeapObjectChange,
+		TimeBuckets:             timeBuckets,
 	}, nil
 }
 
@@ -784,11 +954,10 @@ func measureProofBatch(
 		})
 	}
 
-	totalProofTime, avgProofTime, timeBuckets, avgProofSize, avgVerifyTime := calculateProofBenchmark(proofResults)
+	totalProofTime, avgProofTime, avgProofSize, avgVerifyTime := calculateProofBenchmark(proofResults)
 	return InclusionExclusionProofResult{
 		totalProofTime: totalProofTime,
 		avgProofTime:   avgProofTime,
-		timeBuckets:    timeBuckets,
 		avgProofSize:   avgProofSize,
 		avgVerifyTime:  avgVerifyTime,
 	}
@@ -812,12 +981,16 @@ func measureDeleteBatch(t *testing.T, deleteKeys []utils.Hash, deleteFn func(key
 
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
+	createdHeapObjects, freedHeapObjects, netLiveHeapObjectChange := calculateHeapObjectCounters(before, after)
 
 	return InsertDeleteMetrics{
-		Elapsed:      elapsed,
-		AllocatedMB:  float64(after.Alloc-before.Alloc) / 1024 / 1024,
-		TotalAllocMB: float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
-		HeapObjects:  after.HeapObjects,
+		Elapsed:                 elapsed,
+		AllocatedMB:             float64(after.Alloc-before.Alloc) / 1024 / 1024,
+		TotalAllocMB:            float64(after.TotalAlloc-before.TotalAlloc) / 1024 / 1024,
+		HeapObjects:             after.HeapObjects,
+		CreatedHeapObjects:      createdHeapObjects,
+		FreedHeapObjects:        freedHeapObjects,
+		NetLiveHeapObjectChange: netLiveHeapObjectChange,
 	}
 }
 
@@ -861,17 +1034,21 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		avl := avlhashtree.NewAVLHashTree(options.HashAlgo)
 
 		insertFn = func(key utils.Hash, data []byte) error {
-			return avl.Insert(key, data)
+			return avl.InsertHashed(key, data)
 		}
 
 		deleteFn = func(key utils.Hash) error {
-			return avl.DeleteByKey(key)
+			return avl.Delete(key)
 		}
 
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			proof, err := avl.GenerateInclusionExclusionProofByKey(key)
+			var (
+				proof *avlhashtree.CryptographicProof
+				err   error
+			)
+			proof, err = avl.GenerateInclusionExclusionProof(key)
 			if err != nil {
 				return 0, 0, 0, err
 			}
@@ -905,7 +1082,14 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		smtTree := smt.NewSMT(options.HashAlgo, appendOnly)
 
 		insertFn = func(key utils.Hash, data []byte) error {
-			_, err := smtTree.Insert(key, data)
+			var (
+				inserted bool
+				err      error
+			)
+			inserted, err = smtTree.InsertHashed(key, data)
+			if !inserted && err == nil {
+				return fmt.Errorf("smt insert reported unsuccessful insertion")
+			}
 			return err
 		}
 
@@ -916,8 +1100,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		proveAndVerifyFn = func(key utils.Hash) (int, time.Duration, time.Duration, error) {
 			startProof := time.Now()
 
-			proofKey := utils.GenerateHash(options.HashAlgo, key)
-			proof, err := smtTree.GenerateInclusionExclusionProof(proofKey)
+			proof, err := smtTree.GenerateInclusionExclusionProof(key)
 			if err != nil {
 				return 0, 0, 0, err
 			}
@@ -952,6 +1135,19 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	}
 
 	sampleKeyFn := GetCounterKeyFunc()
+	existingKeyFn := GetCounterKeyFunc()
+	exclusionKeyFn := sampleKeyFn
+	if options.UseOrderedPrehashedKeys {
+		keyProvider, err := newOrderedPrehashedKeyProvider(treeType, totalDistinctElements)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sampleKeyFn = keyProvider.nextFreshKey
+		existingKeyFn = keyProvider.nextExistingKey
+		exclusionKeyFn = GetCounterKeyFuncFrom(int64(totalDistinctElements))
+	}
+
 	nextInsertData := newDataGenerator(options.DataSizeBytes, 0)
 	nextExistingInsertData := newDataGenerator(options.DataSizeBytes, int64(totalDistinctElements))
 
@@ -1007,7 +1203,7 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		)
 
 		if options.MeasureExistingInserts {
-			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, GetCounterKeyFunc(), nextExistingInsertData, insertFn)
+			insertMetrics, err = measureExistingInsertBatch(options.ElementCount, existingKeyFn, nextExistingInsertData, insertFn)
 		} else {
 			insertMetrics, err = runFreshInsertBatch(options.ElementCount, &globalIndex, sampleKeyFn, nextInsertData, insertFn, collector, true)
 		}
@@ -1032,8 +1228,8 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 
 	if options.IncludeExclusionProof {
 		exclusionKeys := make([]utils.Hash, proofSampleSize)
-		for idx := range proofSampleSize {
-			exclusionKeys[idx] = sampleKeyFn()
+		for idx := 0; idx < proofSampleSize; idx++ {
+			exclusionKeys[idx] = exclusionKeyFn()
 		}
 		results["exclusionProof"] = measureProofBatch(t, exclusionKeys, proveAndVerifyFn)
 	}
@@ -1061,12 +1257,14 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		t.Logf("Memory allocated: %.2f MB", inserts.AllocatedMB)
 		t.Logf("Total allocated (including GC'd): %.2f MB", inserts.TotalAllocMB)
 		t.Logf("Heap objects: %d", inserts.HeapObjects)
+		t.Logf("Created heap objects: %d", inserts.CreatedHeapObjects)
+		t.Logf("Freed heap objects: %d", inserts.FreedHeapObjects)
+		t.Logf("Net live-object change: %d", inserts.NetLiveHeapObjectChange)
 	}
 
 	if proofResult, ok := results["inclusionProof"].(InclusionExclusionProofResult); ok {
 		t.Logf("Time taken [Inclusion Proofs]: %v", proofResult.totalProofTime)
 		t.Logf("Average time for Inclusion Proof generation: %v", proofResult.avgProofTime)
-		t.Logf("Inclusion Proof generation buckets: %s", formatTimeBuckets(proofResult.timeBuckets))
 		t.Logf("Average Inclusion Proof size in bytes: %d", proofResult.avgProofSize)
 		t.Logf("Average time for Inclusion Proof verification: %v", proofResult.avgVerifyTime)
 	}
@@ -1079,12 +1277,14 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		t.Logf("Memory allocated [Deletes]: %.2f MB", deletes.AllocatedMB)
 		t.Logf("Total allocated (including GC'd) [Deletes]: %.2f MB", deletes.TotalAllocMB)
 		t.Logf("Heap objects [Deletes]: %d", deletes.HeapObjects)
+		t.Logf("Created heap objects [Deletes]: %d", deletes.CreatedHeapObjects)
+		t.Logf("Freed heap objects [Deletes]: %d", deletes.FreedHeapObjects)
+		t.Logf("Net live-object change [Deletes]: %d", deletes.NetLiveHeapObjectChange)
 	}
 
 	if proofResult, ok := results["exclusionProof"].(InclusionExclusionProofResult); ok {
 		t.Logf("Time taken [Exclusion Proofs]: %v", proofResult.totalProofTime)
 		t.Logf("Average time for Exclusion Proof generation: %v", proofResult.avgProofTime)
-		t.Logf("Exclusion Proof generation buckets: %s", formatTimeBuckets(proofResult.timeBuckets))
 		t.Logf("Average Exclusion Proof size in bytes: %d", proofResult.avgProofSize)
 		t.Logf("Average time for Exclusion Proof verification: %v", proofResult.avgVerifyTime)
 	}
@@ -1106,6 +1306,9 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		result.MemoryAllocatedMB = inserts.AllocatedMB
 		result.TotalAllocatedMB = inserts.TotalAllocMB
 		result.HeapObjects = inserts.HeapObjects
+		result.CreatedHeapObjects = inserts.CreatedHeapObjects
+		result.FreedHeapObjects = inserts.FreedHeapObjects
+		result.NetLiveHeapObjectChange = inserts.NetLiveHeapObjectChange
 	}
 
 	if deletes, ok := results["deletes"].(InsertDeleteMetrics); ok {
@@ -1117,12 +1320,14 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 		result.DeletesMemoryAllocatedMB = deletes.AllocatedMB
 		result.DeletesTotalAllocatedMB = deletes.TotalAllocMB
 		result.DeletesHeapObjects = deletes.HeapObjects
+		result.DeletesCreatedHeapObjects = deletes.CreatedHeapObjects
+		result.DeletesFreedHeapObjects = deletes.FreedHeapObjects
+		result.DeletesNetLiveHeapObjectChange = deletes.NetLiveHeapObjectChange
 	}
 
 	if proofResult, ok := results["inclusionProof"].(InclusionExclusionProofResult); ok {
 		result.InclusionProofTotalTime = proofResult.totalProofTime
 		result.InclusionProofGenTime = proofResult.avgProofTime
-		result.InclusionProofGenBuckets = proofResult.timeBuckets
 		result.InclusionProofSize = proofResult.avgProofSize
 		result.InclusionProofVerifyTime = proofResult.avgVerifyTime
 	}
@@ -1130,7 +1335,6 @@ func runBenchmark(t *testing.T, options *BenchmarkOptions, profiler *benchmarkPr
 	if proofResult, ok := results["exclusionProof"].(InclusionExclusionProofResult); ok {
 		result.ExclusionProofTotalTime = proofResult.totalProofTime
 		result.ExclusionProofGenTime = proofResult.avgProofTime
-		result.ExclusionProofGenBuckets = proofResult.timeBuckets
 		result.ExclusionProofSize = proofResult.avgProofSize
 		result.ExclusionProofVerifyTime = proofResult.avgVerifyTime
 	}
@@ -1148,12 +1352,21 @@ func GetCounterKeyFunc() func() utils.Hash {
 	return GetCounterKeyFuncFrom(0)
 }
 
+func hashCounterSeed(seed uint64) utils.Hash {
+	var counterBytes [8]byte
+	binary.BigEndian.PutUint64(counterBytes[:], seed)
+	return utils.GenerateHashSha256(counterBytes[:])
+}
+
 func GetCounterKeyFuncFrom(start int64) func() utils.Hash {
-	counter := big.NewInt(start)
-	one := big.NewInt(1)
+	if start < 0 {
+		start = 0
+	}
+
+	counter := uint64(start)
 
 	return func() utils.Hash {
-		counter.Add(counter, one)
-		return utils.GenerateHashSha256(counter.Bytes())
+		counter++
+		return hashCounterSeed(counter)
 	}
 }

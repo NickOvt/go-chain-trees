@@ -7,7 +7,6 @@
 *.dll
 *.so
 *.dylib
-*.csv
 
 # Test binary, built with `go test -c`
 *.test
@@ -30,3 +29,6 @@ go.work.sum
 images
 *.prof
 *.pdf
+
+/smt/test/**/*.csv
+/avlhashtree/test/**/*.csv

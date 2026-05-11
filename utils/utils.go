@@ -151,6 +151,12 @@ type DataHasher struct {
 	scratch []byte
 }
 
+var (
+	cborArrayHeader2 = [1]byte{0x82}
+	cborArrayHeader3 = [1]byte{0x83}
+	cborNil          = [1]byte{0xf6}
+)
+
 func NewDataHasher(hashAlgo HashAlgo) *DataHasher {
 	return &DataHasher{hasher: NewHasher(hashAlgo)}
 }
@@ -195,6 +201,39 @@ func (h *DataHasher) SumTo(dst []byte, values ...[]byte) Hash {
 	}
 
 	h.scratch = scratch
+	return h.hasher.Sum(dst[:0])
+}
+
+func (h *DataHasher) writeCBORBytesOrNil(value []byte) {
+	scratch := h.scratch[:0]
+	if value == nil {
+		_, _ = h.hasher.Write(cborNil[:])
+		h.scratch = scratch
+		return
+	}
+
+	scratch = appendCBORMajorTypeHeader(scratch, 2, len(value))
+	_, _ = h.hasher.Write(scratch)
+	_, _ = h.hasher.Write(value)
+	h.scratch = scratch
+}
+
+// Sum2To hashes CBOR([value0, value1]) where values are byte strings or nil.
+func (h *DataHasher) Sum2To(dst []byte, value0, value1 []byte) Hash {
+	h.hasher.Reset()
+	_, _ = h.hasher.Write(cborArrayHeader2[:])
+	h.writeCBORBytesOrNil(value0)
+	h.writeCBORBytesOrNil(value1)
+	return h.hasher.Sum(dst[:0])
+}
+
+// Sum3To hashes CBOR([value0, value1, value2]) where values are byte strings or nil.
+func (h *DataHasher) Sum3To(dst []byte, value0, value1, value2 []byte) Hash {
+	h.hasher.Reset()
+	_, _ = h.hasher.Write(cborArrayHeader3[:])
+	h.writeCBORBytesOrNil(value0)
+	h.writeCBORBytesOrNil(value1)
+	h.writeCBORBytesOrNil(value2)
 	return h.hasher.Sum(dst[:0])
 }
 

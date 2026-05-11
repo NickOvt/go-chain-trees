@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,7 +34,9 @@ func TestSMT_GenerateInclusionExclusionProof_Inclusion_LeafToRootOrderAndHashCha
 	if !bytes.Equal(proof.Root, tree.GetRoot().Hash) {
 		t.Fatalf("proof root hash mismatch")
 	}
-
+	if !bytes.Equal(proof.Key, targetHash) {
+		t.Fatalf("proof key mismatch")
+	}
 	first := proof.Path[0]
 	if len(first.Data) == 0 {
 		t.Fatalf("expected first proof node to contain leaf data")
@@ -95,21 +98,28 @@ func TestSMT_GenerateInclusionExclusionProof_Exclusion_MissingRootChild(t *testi
 	if proof == nil {
 		t.Fatalf("expected proof, got nil")
 	}
-	if len(proof.Path) != 1 {
-		t.Fatalf("expected one-step exclusion proof for missing root child, got %d", len(proof.Path))
+	if len(proof.Path) != 2 {
+		t.Fatalf("expected empty witness + root sibling proof, got %d", len(proof.Path))
 	}
 	if !bytes.Equal(proof.Root, tree.GetRoot().Hash) {
 		t.Fatalf("proof root hash mismatch")
 	}
+	emptyStep := proof.Path[0]
+	if len(emptyStep.Data) != 0 {
+		t.Fatalf("did not expect leaf data in empty exclusion witness")
+	}
+	if len(emptyStep.Hash) != 0 {
+		t.Fatalf("did not expect hash in empty exclusion witness")
+	}
 
-	step := proof.Path[0]
-	if len(step.Path) != 0 {
-		t.Fatalf("expected exclusion witness to be rooted at tree root path")
+	rootStep := proof.Path[1]
+	if len(rootStep.Path) != 0 {
+		t.Fatalf("expected root sibling witness to be rooted at tree root path")
 	}
-	if len(step.Data) != 0 {
-		t.Fatalf("did not expect leaf data in missing-child exclusion witness")
+	if len(rootStep.Data) != 0 {
+		t.Fatalf("did not expect leaf data in root sibling witness")
 	}
-	if len(step.Hash) == 0 {
+	if len(rootStep.Hash) == 0 {
 		t.Fatalf("expected sibling hash witness in exclusion proof")
 	}
 
@@ -118,7 +128,7 @@ func TestSMT_GenerateInclusionExclusionProof_Exclusion_MissingRootChild(t *testi
 	if existingLeaf == nil {
 		t.Fatalf("failed to find existing leaf")
 	}
-	if !bytes.Equal(step.Hash, existingLeaf.Hash) {
+	if !bytes.Equal(rootStep.Hash, existingLeaf.Hash) {
 		t.Fatalf("exclusion witness hash does not match existing sibling leaf hash")
 	}
 }
@@ -157,6 +167,9 @@ func TestSMT_InclusionExclusionProof_ToPublicProof_ReturnsRootAndPathTuples(t *t
 	if !bytes.Equal(publicProof.Root, proof.Root) {
 		t.Fatalf("public proof root mismatch")
 	}
+	if !bytes.Equal(publicProof.Key, proof.Key) {
+		t.Fatalf("public proof key mismatch")
+	}
 	if len(publicProof.Path) != len(proof.Path) {
 		t.Fatalf("public proof path length mismatch")
 	}
@@ -177,6 +190,21 @@ func TestSMT_InclusionExclusionProof_ToPublicProof_ReturnsRootAndPathTuples(t *t
 		}
 		if !bytes.Equal(publicProof.Path[i][1], proof.Path[i].Hash) {
 			t.Fatalf("public proof tuple[%d] should contain hash witness", i)
+		}
+	}
+}
+
+func TestSMT_PublicInclusionExclusionProof_HasStableRootPathKeyShape(t *testing.T) {
+	proofType := reflect.TypeOf(smt.PublicInclusionExclusionProof{})
+	wantFields := []string{"Root", "Path", "Key"}
+
+	if proofType.NumField() != len(wantFields) {
+		t.Fatalf("expected public proof to have %d fields, got %d", len(wantFields), proofType.NumField())
+	}
+
+	for idx, want := range wantFields {
+		if got := proofType.Field(idx).Name; got != want {
+			t.Fatalf("unexpected public proof field %d: got %q want %q", idx, got, want)
 		}
 	}
 }
@@ -250,11 +278,62 @@ func TestSMT_VerifyPublicProof_ExclusionMissingRootChild(t *testing.T) {
 	}
 
 	valid, err := tree.VerifyPublicProof(proof.ToPublicProof())
-	if err == nil {
-		t.Fatalf("expected error for exclusion proof represented in simplified public format")
+	if err != nil {
+		t.Fatalf("VerifyPublicProof returned error: %v", err)
 	}
-	if valid {
-		t.Fatalf("expected simplified public exclusion proof to be invalid")
+	if !valid {
+		t.Fatalf("expected valid public exclusion proof")
+	}
+}
+
+func TestSMT_VerifyProof_ExclusionDivergentLeaf(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	existingKey := findKeyWithHashPrefix(t, "00", used)
+	insertKeys(t, tree, existingKey)
+
+	missingKey := findKeyWithHashPrefix(t, "01", used)
+	missingKeyHash := utils.GenerateHash(tree.HashAlgo, missingKey)
+
+	proof, err := tree.GenerateInclusionExclusionProof(missingKeyHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+	if len(proof.Path) == 0 || len(proof.Path[0].Data) == 0 {
+		t.Fatalf("expected divergent-leaf exclusion proof to include leaf data witness")
+	}
+
+	valid, err := tree.VerifyProof(proof)
+	if err != nil {
+		t.Fatalf("VerifyProof returned error: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected valid divergent-leaf exclusion proof")
+	}
+}
+
+func TestSMT_VerifyPublicProof_ExclusionDivergentLeaf(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	existingKey := findKeyWithHashPrefix(t, "00", used)
+	insertKeys(t, tree, existingKey)
+
+	missingKey := findKeyWithHashPrefix(t, "01", used)
+	missingKeyHash := utils.GenerateHash(tree.HashAlgo, missingKey)
+
+	proof, err := tree.GenerateInclusionExclusionProof(missingKeyHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	valid, err := tree.VerifyPublicProof(proof.ToPublicProof())
+	if err != nil {
+		t.Fatalf("VerifyPublicProof returned error: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected valid public divergent-leaf exclusion proof")
 	}
 }
 
@@ -284,7 +363,7 @@ func TestSMT_VerifyPublicProof_TamperedRoot(t *testing.T) {
 	}
 }
 
-func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchLeafKey(t *testing.T) {
+func TestSMT_VerifyPublicProof_TamperedKey(t *testing.T) {
 	tree := smt.NewSMT(utils.SHA256, true)
 	used := map[string]struct{}{}
 
@@ -298,20 +377,42 @@ func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchLeafKey(t *testing.T) {
 		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
 	}
 
-	leaf := findLeafByKeyHash(tree.GetRoot(), targetHash)
-	if leaf == nil {
-		t.Fatalf("failed to find target leaf in tree")
+	publicProof := proof.ToPublicProof()
+	publicProof.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
+
+	valid, err := tree.VerifyPublicProof(publicProof)
+	if err == nil {
+		t.Fatalf("expected error for tampered public proof key")
 	}
-	leaf.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
+	if valid {
+		t.Fatalf("expected tampered public proof to be invalid")
+	}
+}
+
+func TestSMT_VerifyProof_FailsWhenLeafPathDoesNotMatchProofKey(t *testing.T) {
+	tree := smt.NewSMT(utils.SHA256, true)
+	used := map[string]struct{}{}
+
+	k00 := findKeyWithHashPrefix(t, "00", used)
+	k01 := findKeyWithHashPrefix(t, "01", used)
+	insertKeys(t, tree, k00, k01)
+
+	targetHash := utils.GenerateHash(tree.HashAlgo, k00)
+	proof, err := tree.GenerateInclusionExclusionProof(targetHash)
+	if err != nil {
+		t.Fatalf("GenerateInclusionExclusionProof returned error: %v", err)
+	}
+
+	proof.Key = utils.GenerateHash(tree.HashAlgo, []byte("tampered-key"))
 
 	valid, err := tree.VerifyProof(proof)
 	if err == nil {
-		t.Fatalf("expected verify error when leaf key does not match calculated path")
+		t.Fatalf("expected verify error when proof key does not match calculated path")
 	}
 	if valid {
-		t.Fatalf("expected invalid proof when leaf key is inconsistent with path")
+		t.Fatalf("expected invalid proof when proof key is inconsistent with path")
 	}
-	if !strings.Contains(err.Error(), "does not match leaf key") {
+	if !strings.Contains(err.Error(), "does not match proof key") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
